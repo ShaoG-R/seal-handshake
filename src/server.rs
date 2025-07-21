@@ -101,15 +101,16 @@ impl HandshakeServer<Ready> {
                 let kem_key_pair = kem.generate_keypair()?;
                 let public_key = kem_key_pair.public_key();
 
-                // Sign the ephemeral public key with the long-term identity key.
-                // 使用长期身份密钥对临时公钥进行签名。
-                let data_to_sign =
-                    bincode::encode_to_vec(&public_key, bincode::config::standard())
-                        .map_err(HandshakeError::from)?;
-                let signature = self.suite.signature().sign(
-                    &data_to_sign,
-                    &self.signature_key_pair.private_key(),
-                )?;
+                // Sign the ephemeral public key with the long-term identity key, if a signature scheme is provided.
+                // 如果提供了签名方案，则使用长期身份密钥对临时公钥进行签名。
+                let signature = if let Some(signer) = self.suite.signature() {
+                    let data_to_sign =
+                        bincode::encode_to_vec(&public_key, bincode::config::standard())
+                            .map_err(HandshakeError::from)?;
+                    Some(signer.sign(&data_to_sign, &self.signature_key_pair.private_key())?)
+                } else {
+                    None
+                };
 
                 let server_hello = HandshakeMessage::ServerHello {
                     public_key: public_key.clone(),

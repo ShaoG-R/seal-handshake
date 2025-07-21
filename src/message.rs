@@ -3,6 +3,7 @@ use seal_flow::common::header::{SealFlowHeader, SymmetricParams};
 use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 use seal_flow::crypto::prelude::{EncapsulatedKey, TypedKemPublicKey};
+use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
 use serde::{Deserialize, Serialize};
 
 /// Defines the messages exchanged during the handshake protocol.
@@ -19,7 +20,7 @@ pub enum HandshakeMessage {
         /// The signature of the server's ephemeral public key, signed by its long-term identity key.
         ///
         /// 服务器临时公钥的签名，由其长期身份密钥签署。
-        signature: Vec<u8>,
+        signature: Option<SignatureWrapper>,
     },
 
     /// Client -> Server: Contains the KEM encapsulated key and an encrypted payload.

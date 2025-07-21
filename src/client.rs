@@ -129,22 +129,31 @@ impl HandshakeClient<AwaitingKemPublicKey> {
             _ => return Err(HandshakeError::InvalidMessage),
         };
 
-        // Verify the signature of the ephemeral KEM public key.
+        // Verify the signature of the ephemeral KEM public key, if one is provided.
         // This ensures the server owns the long-term private key corresponding
         // to the public key we have.
         //
-        // 验证临时 KEM 公钥的签名。
+        // 如果提供了签名，则验证临时 KEM 公钥的签名。
         // 这确保了服务器拥有我们持有的公钥所对应的长期私钥。
-        let data_to_verify = bincode::encode_to_vec(&server_pk, bincode::config::standard())
-            .map_err(HandshakeError::from)?;
-        self.suite
-            .signature()
-            .verify(
-                &data_to_verify,
-                &self.server_signature_public_key,
-                signature,
-            )
-            .map_err(|_| HandshakeError::InvalidSignature)?;
+        if let Some(signature) = signature {
+            let data_to_verify = bincode::encode_to_vec(&server_pk, bincode::config::standard())
+                .map_err(HandshakeError::from)?;
+            if let Some(verifier) = self.suite.signature() {
+                verifier
+                    .verify(
+                        &data_to_verify,
+                        &self.server_signature_public_key,
+                        &signature,
+                    )
+                    .map_err(|_| HandshakeError::InvalidSignature)?;
+            } else {
+                // The server provided a signature, but we don't have a verification key/algorithm.
+                // This could be a configuration mismatch.
+                // 服务器提供了签名，但我们没有验证密钥/算法。
+                // 这可能是配置不匹配。
+                return Err(HandshakeError::InvalidSignature);
+            }
+        }
 
         let aead = self.suite.aead();
         let kdf = self.suite.kdf();
