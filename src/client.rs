@@ -4,18 +4,13 @@
 use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::state::{AwaitingKemPublicKey, Established, Ready};
-use crate::suite::{ProtocolSuite, ProtocolSuiteBuilder};
+use crate::suite::ProtocolSuite;
 use seal_flow::common::header::SymmetricParamsBuilder;
 use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
     KemAlgorithmTrait, SignatureAlgorithmTrait, SymmetricAlgorithmTrait,
 };
-use seal_flow::crypto::wrappers::asymmetric::kem::KemAlgorithmWrapper;
-use seal_flow::crypto::wrappers::asymmetric::key_agreement::KeyAgreementAlgorithmWrapper;
-use seal_flow::crypto::wrappers::asymmetric::signature::SignatureAlgorithmWrapper;
-use seal_flow::crypto::wrappers::kdf::key::KdfKeyWrapper;
-use seal_flow::crypto::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
 use seal_flow::rand::TryRngCore;
@@ -53,96 +48,25 @@ pub struct HandshakeClient<S> {
     decryption_key: Option<TypedSymmetricKey>,
 }
 
-/// A builder for constructing and configuring a `HandshakeClient`.
-///
-/// 用于构建和配置 `HandshakeClient` 的构建器。
-#[derive(Default)]
-pub struct HandshakeClientBuilder {
-    suite_builder: ProtocolSuiteBuilder,
-    server_signature_public_key: Option<TypedSignaturePublicKey>,
-}
-
-impl HandshakeClientBuilder {
-    /// Creates a new `HandshakeClientBuilder`.
+impl HandshakeClient<Ready> {
+    /// Creates a new `HandshakeClient` in the `Ready` state.
     ///
-    /// 创建一个新的 `HandshakeClientBuilder`。
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the server's long-term public key for verifying signatures.
+    /// This constructor takes the protocol suite and the server's public key for signature verification.
     ///
-    /// 设置用于验证签名的服务器长期公钥。
-    pub fn with_server_signature_public_key(
-        mut self,
-        public_key: TypedSignaturePublicKey,
+    /// 在 `Ready` 状态下创建一个新的 `HandshakeClient`。
+    ///
+    /// 此构造函数接收协议套件和用于签名验证的服务器公钥。
+    pub fn new(
+        suite: ProtocolSuite,
+        server_signature_public_key: TypedSignaturePublicKey,
     ) -> Self {
-        self.server_signature_public_key = Some(public_key);
-        self
-    }
-
-    /// Sets the Signature algorithm for the protocol suite.
-    ///
-    /// 为协议套件设置签名算法。
-    pub fn with_signature(mut self, signature: SignatureAlgorithmWrapper) -> Self {
-        self.suite_builder = self.suite_builder.with_signature(signature);
-        self
-    }
-
-    /// Sets the Key Encapsulation Mechanism (KEM) for the protocol suite.
-    ///
-    /// 为协议套件设置密钥封装机制 (KEM)。
-    pub fn with_kem(mut self, kem: KemAlgorithmWrapper) -> Self {
-        self.suite_builder = self.suite_builder.with_kem(kem);
-        self
-    }
-
-    /// Sets the Key Agreement algorithm for the protocol suite.
-    ///
-    /// 为协议套件设置密钥协商算法。
-    pub fn with_key_agreement(mut self, ka: KeyAgreementAlgorithmWrapper) -> Self {
-        self.suite_builder = self.suite_builder.with_key_agreement(ka);
-        self
-    }
-
-    /// Sets the Authenticated Encryption with Associated Data (AEAD) algorithm.
-    ///
-    /// 设置带有关联数据的认证加密 (AEAD) 算法。
-    pub fn with_aead(mut self, aead: SymmetricAlgorithmWrapper) -> Self {
-        self.suite_builder = self.suite_builder.with_aead(aead);
-        self
-    }
-
-    /// Sets the Key Derivation Function (KDF).
-    ///
-    /// 设置密钥派生函数 (KDF)。
-    pub fn with_kdf(mut self, kdf: KdfKeyWrapper) -> Self {
-        self.suite_builder = self.suite_builder.with_kdf(kdf);
-        self
-    }
-
-    /// Builds the `HandshakeClient` in its initial `Ready` state.
-    ///
-    /// 构建处于初始 `Ready` 状态的 `HandshakeClient`。
-    pub fn build(self) -> HandshakeClient<Ready> {
-        HandshakeClient {
+        Self {
             state: PhantomData,
-            suite: self.suite_builder.build(),
-            server_signature_public_key: self
-                .server_signature_public_key
-                .expect("Server signature public key must be set"),
+            suite,
+            server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
         }
-    }
-}
-
-impl<S> HandshakeClient<S> {
-    /// Returns a builder for the `HandshakeClient`.
-    ///
-    /// 返回一个 `HandshakeClient` 的构建器。
-    pub fn builder() -> HandshakeClientBuilder {
-        HandshakeClientBuilder::new()
     }
 }
 

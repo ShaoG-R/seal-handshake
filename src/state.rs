@@ -11,22 +11,20 @@
 /// 握手前的初始状态。
 ///
 /// 在此状态下，可以发起握手。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Ready;
 
 /// A client state indicating that it has sent a public key request
 /// and is now awaiting the server's public key.
 ///
 /// 客户端状态，表示已发送公钥请求，正在等待服务端的公钥。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct AwaitingKemPublicKey;
 
-/// A client state indicating that it has initiated a key agreement
-/// by sending its public key and is awaiting the server's response.
-///
-/// 客户端状态，表示已通过发送其公钥来发起密钥协商，并正在等待服务端的响应。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AwaitingKeyAgreementResponse;
+/// Represents the server's `AwaitingKeyExchange` state.
+/// In this state, the server has sent its `ServerHello` and is waiting for the client's key exchange message.
+#[derive(Debug)]
+pub struct AwaitingKeyExchange;
 
 /// The final state of a successful handshake.
 ///
@@ -36,5 +34,5 @@ pub struct AwaitingKeyAgreementResponse;
 /// 成功握手的最终状态。
 ///
 /// 在此状态下，双方拥有共享密钥，可以安全地交换加密的应用数据。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Established;
