@@ -6,8 +6,11 @@ use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::state::{AwaitingKemPublicKey, Established, Ready};
 use crate::suite::{ProtocolSuite, ProtocolSuiteBuilder};
 use seal_flow::common::header::SymmetricParamsBuilder;
+use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
-use seal_flow::crypto::traits::{KemAlgorithmTrait, SymmetricAlgorithmTrait};
+use seal_flow::crypto::traits::{
+    KemAlgorithmTrait, SignatureAlgorithmTrait, SymmetricAlgorithmTrait,
+};
 use seal_flow::crypto::wrappers::asymmetric::kem::KemAlgorithmWrapper;
 use seal_flow::crypto::wrappers::asymmetric::key_agreement::KeyAgreementAlgorithmWrapper;
 use seal_flow::crypto::wrappers::kdf::key::KdfKeyWrapper;
@@ -36,6 +39,10 @@ pub struct HandshakeClient<S> {
     ///
     /// 握手过程中使用的密码套件。
     suite: ProtocolSuite,
+    /// The server's long-term public key for verifying signatures.
+    ///
+    /// 用于验证签名的服务器长期公钥。
+    server_signature_public_key: TypedSignaturePublicKey,
     /// Derived keys for encryption (client-to-server) and decryption (server-to-client).
     /// These are established after the key exchange.
     ///
@@ -51,6 +58,7 @@ pub struct HandshakeClient<S> {
 #[derive(Default)]
 pub struct HandshakeClientBuilder {
     suite_builder: ProtocolSuiteBuilder,
+    server_signature_public_key: Option<TypedSignaturePublicKey>,
 }
 
 impl HandshakeClientBuilder {
@@ -59,6 +67,17 @@ impl HandshakeClientBuilder {
     /// 创建一个新的 `HandshakeClientBuilder`。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the server's long-term public key for verifying signatures.
+    ///
+    /// 设置用于验证签名的服务器长期公钥。
+    pub fn with_server_signature_public_key(
+        mut self,
+        public_key: TypedSignaturePublicKey,
+    ) -> Self {
+        self.server_signature_public_key = Some(public_key);
+        self
     }
 
     /// Sets the Key Encapsulation Mechanism (KEM) for the protocol suite.
@@ -100,6 +119,9 @@ impl HandshakeClientBuilder {
         HandshakeClient {
             state: PhantomData,
             suite: self.suite_builder.build(),
+            server_signature_public_key: self
+                .server_signature_public_key
+                .expect("Server signature public key must be set"),
             encryption_key: None,
             decryption_key: None,
         }
@@ -128,6 +150,7 @@ impl HandshakeClient<Ready> {
         let next_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
+            server_signature_public_key: self.server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
         };
@@ -161,15 +184,33 @@ impl HandshakeClient<AwaitingKemPublicKey> {
     ) -> Result<(HandshakeMessage, HandshakeClient<Established>)> {
         // Extract the server's public key and KEM algorithm from the message.
         // 从消息中提取服务器的公钥和 KEM 算法。
-        let (server_pk, kem_algorithm) = match message {
+        let (server_pk, kem_algorithm, signature) = match message {
             HandshakeMessage::ServerHello {
                 public_key,
                 kem_algorithm,
-            } => (public_key, kem_algorithm),
+                signature,
+            } => (public_key, kem_algorithm, signature),
             // Return an error if the message is not a `ServerHello`.
             // 如果消息不是 `ServerHello`，则返回错误。
             _ => return Err(HandshakeError::InvalidMessage),
         };
+
+        // Verify the signature of the ephemeral KEM public key.
+        // This ensures the server owns the long-term private key corresponding
+        // to the public key we have.
+        //
+        // 验证临时 KEM 公钥的签名。
+        // 这确保了服务器拥有我们持有的公钥所对应的长期私钥。
+        let data_to_verify = bincode::encode_to_vec(&server_pk, bincode::config::standard())
+            .map_err(HandshakeError::from)?;
+        self.suite
+            .signature()
+            .verify(
+                &data_to_verify,
+                &self.server_signature_public_key,
+                signature,
+            )
+            .map_err(|_| HandshakeError::InvalidSignature)?;
 
         let aead = self.suite.aead();
         let kdf = self.suite.kdf();
@@ -256,6 +297,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         let established_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
+            server_signature_public_key: self.server_signature_public_key,
             encryption_key: Some(encryption_key),
             decryption_key: Some(decryption_key),
         };

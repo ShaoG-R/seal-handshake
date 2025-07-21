@@ -5,9 +5,12 @@ use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::suite::{ProtocolSuite, ProtocolSuiteBuilder};
 use seal_flow::common::header::SymmetricParamsBuilder;
+use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
-use seal_flow::crypto::traits::{KemAlgorithmTrait, SymmetricAlgorithmTrait};
-use seal_flow::crypto::wrappers::asymmetric::kem::KemAlgorithmWrapper;
+use seal_flow::crypto::traits::{
+    KemAlgorithmTrait, SignatureAlgorithmTrait, SymmetricAlgorithmTrait,
+};
+use seal_flow::crypto::wrappers::asymmetric::kem::{KemAlgorithmWrapper};
 use seal_flow::crypto::wrappers::asymmetric::key_agreement::KeyAgreementAlgorithmWrapper;
 use seal_flow::crypto::wrappers::kdf::key::KdfKeyWrapper;
 use seal_flow::crypto::wrappers::symmetric::SymmetricAlgorithmWrapper;
@@ -61,6 +64,10 @@ pub struct HandshakeServer<S> {
     ///
     /// 握手过程中使用的密码套件。
     suite: ProtocolSuite,
+    /// The server's long-term identity key pair for signing.
+    ///
+    /// 服务器用于签名的长期身份密钥对。
+    signature_key_pair: TypedSignatureKeyPair,
     /// The server's ephemeral KEM key pair, generated for this session.
     /// It is consumed after the key exchange.
     ///
@@ -83,6 +90,7 @@ pub struct HandshakeServer<S> {
 #[derive(Default)]
 pub struct HandshakeServerBuilder {
     suite_builder: ProtocolSuiteBuilder,
+    signature_key_pair: Option<TypedSignatureKeyPair>,
 }
 
 impl HandshakeServerBuilder {
@@ -91,6 +99,14 @@ impl HandshakeServerBuilder {
     /// 创建一个新的 `HandshakeServerBuilder`。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the server's long-term identity key pair for signing.
+    ///
+    /// 设置服务器用于签名的长期身份密钥对。
+    pub fn with_signature_key_pair(mut self, key_pair: TypedSignatureKeyPair) -> Self {
+        self.signature_key_pair = Some(key_pair);
+        self
     }
 
     /// Sets the Key Encapsulation Mechanism (KEM) for the protocol suite.
@@ -132,6 +148,9 @@ impl HandshakeServerBuilder {
         HandshakeServer {
             state: PhantomData,
             suite: self.suite_builder.build(),
+            signature_key_pair: self
+                .signature_key_pair
+                .expect("Signature key pair must be set"),
             kem_key_pair: None,
             encryption_key: None,
             decryption_key: None,
@@ -170,14 +189,26 @@ impl HandshakeServer<Ready> {
                 let kem_key_pair = kem.generate_keypair()?;
                 let public_key = kem_key_pair.public_key();
 
+                // Sign the ephemeral public key with the long-term identity key.
+                // 使用长期身份密钥对临时公钥进行签名。
+                let data_to_sign =
+                    bincode::encode_to_vec(&public_key, bincode::config::standard())
+                        .map_err(HandshakeError::from)?;
+                let signature = self.suite.signature().sign(
+                    &data_to_sign,
+                    &self.signature_key_pair.private_key(),
+                )?;
+
                 let server_hello = HandshakeMessage::ServerHello {
-                    public_key,
+                    public_key: public_key.clone(),
                     kem_algorithm: kem.algorithm(),
+                    signature,
                 };
 
                 let next_server = HandshakeServer {
                     state: PhantomData,
                     suite: self.suite,
+                    signature_key_pair: self.signature_key_pair,
                     kem_key_pair: Some(kem_key_pair),
                     encryption_key: None,
                     decryption_key: None,
@@ -271,6 +302,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
         let established_server = HandshakeServer {
             state: PhantomData,
             suite: self.suite,
+            signature_key_pair: self.signature_key_pair,
             kem_key_pair: None, // Consumed
             encryption_key: Some(encryption_key),
             decryption_key: Some(decryption_key),

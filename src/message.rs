@@ -16,8 +16,10 @@ pub enum HandshakeMessage {
     ServerHello {
         public_key: TypedKemPublicKey,
         kem_algorithm: KemAlgorithm,
-        // In a real implementation, this would be signed by a long-term identity key.
-        // signature: Vec<u8>,
+        /// The signature of the server's ephemeral public key, signed by its long-term identity key.
+        ///
+        /// 服务器临时公钥的签名，由其长期身份密钥签署。
+        signature: Vec<u8>,
     },
 
     /// Client -> Server: Contains the KEM encapsulated key and an encrypted payload.

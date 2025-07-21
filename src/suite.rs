@@ -1,8 +1,9 @@
 use seal_flow::crypto::wrappers::{
     asymmetric::kem::KemAlgorithmWrapper,
-    symmetric::SymmetricAlgorithmWrapper,
     asymmetric::key_agreement::KeyAgreementAlgorithmWrapper,
+    asymmetric::signature::SignatureAlgorithmWrapper,
     kdf::key::KdfKeyWrapper,
+    symmetric::SymmetricAlgorithmWrapper,
 };
 
 
@@ -11,6 +12,7 @@ use seal_flow::crypto::wrappers::{
 pub struct ProtocolSuite {
     kem: KemAlgorithmWrapper,
     key_agreement: KeyAgreementAlgorithmWrapper,
+    signature: SignatureAlgorithmWrapper,
     aead: SymmetricAlgorithmWrapper,
     kdf: KdfKeyWrapper,
 }
@@ -19,6 +21,7 @@ pub struct ProtocolSuite {
 pub struct ProtocolSuiteBuilder {
     kem: Option<KemAlgorithmWrapper>,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    signature: Option<SignatureAlgorithmWrapper>,
     aead: Option<SymmetricAlgorithmWrapper>,
     kdf: Option<KdfKeyWrapper>,
 }
@@ -38,6 +41,11 @@ impl ProtocolSuiteBuilder {
         self
     }
 
+    pub fn with_signature(mut self, signature: SignatureAlgorithmWrapper) -> Self {
+        self.signature = Some(signature);
+        self
+    }
+
     pub fn with_aead(mut self, aead: SymmetricAlgorithmWrapper) -> Self {
         self.aead = Some(aead);
         self
@@ -54,6 +62,7 @@ impl ProtocolSuiteBuilder {
             key_agreement: self
                 .key_agreement
                 .expect("Key agreement algorithm must be set"),
+            signature: self.signature.expect("Signature algorithm must be set"),
             aead: self.aead.expect("AEAD algorithm must be set"),
             kdf: self.kdf.expect("KDF algorithm must be set"),
         }
@@ -67,6 +76,10 @@ impl ProtocolSuite {
 
     pub fn key_agreement(&self) -> &KeyAgreementAlgorithmWrapper {
         &self.key_agreement
+    }
+
+    pub fn signature(&self) -> &SignatureAlgorithmWrapper {
+        &self.signature
     }
 
     pub fn aead(&self) -> &SymmetricAlgorithmWrapper {

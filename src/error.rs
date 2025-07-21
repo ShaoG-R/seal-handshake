@@ -44,8 +44,11 @@ pub enum HandshakeError {
     #[error("serialization or deserialization failed: {0}")]
     SerializationError(#[from] BincodeError),
 
-    #[error("invalid state transition attempted")]
+    #[error("invalid state for the requested operation")]
     InvalidState,
+
+    #[error("invalid signature")]
+    InvalidSignature,
 
     #[error("received an unexpected or invalid message for the current state")]
     InvalidMessage,
@@ -60,4 +63,16 @@ impl From<seal_flow::crypto::error::Error> for HandshakeError {
     }
 }
 
+
+impl From<bincode::error::EncodeError> for HandshakeError {
+    fn from(err: bincode::error::EncodeError) -> Self {
+        HandshakeError::SerializationError(err.into())
+    }
+}
+
+impl From<bincode::error::DecodeError> for HandshakeError {
+    fn from(err: bincode::error::DecodeError) -> Self {
+        HandshakeError::SerializationError(err.into())
+    }
+}
 pub type Result<T> = std::result::Result<T, HandshakeError>;
