@@ -1,4 +1,5 @@
 //! Implements the client-side of the handshake protocol state machine.
+//！ 实现握手协议状态机的客户端。
 
 use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
@@ -21,48 +22,80 @@ use std::marker::PhantomData;
 /// The client-side handshake state machine.
 ///
 /// Generic over the state `S` to enforce protocol flow at compile time.
+///
+/// 客户端握手协议状态机。
+///
+/// 通过泛型状态 `S` 在编译时强制执行协议流程。
 #[derive(Debug)]
 pub struct HandshakeClient<S> {
+    /// Zero-sized marker to hold the current state `S`.
+    ///
+    /// 零大小标记，用于持有当前状态 `S`。
     state: PhantomData<S>,
+    /// The cryptographic suite used for the handshake.
+    ///
+    /// 握手过程中使用的密码套件。
     suite: ProtocolSuite,
-    // Derived keys for encryption (client-to-server) and decryption (server-to-client).
-    // These are established after the key exchange.
+    /// Derived keys for encryption (client-to-server) and decryption (server-to-client).
+    /// These are established after the key exchange.
+    ///
+    /// 用于加密（客户端到服务器）和解密（服务器到客户端）的派生密钥。
+    /// 这些密钥在密钥交换后建立。
     encryption_key: Option<TypedSymmetricKey>,
     decryption_key: Option<TypedSymmetricKey>,
 }
 
 /// A builder for constructing and configuring a `HandshakeClient`.
+///
+/// 用于构建和配置 `HandshakeClient` 的构建器。
 #[derive(Default)]
 pub struct HandshakeClientBuilder {
     suite_builder: ProtocolSuiteBuilder,
 }
 
 impl HandshakeClientBuilder {
+    /// Creates a new `HandshakeClientBuilder`.
+    ///
+    /// 创建一个新的 `HandshakeClientBuilder`。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the Key Encapsulation Mechanism (KEM) for the protocol suite.
+    ///
+    /// 为协议套件设置密钥封装机制 (KEM)。
     pub fn with_kem(mut self, kem: KemAlgorithmWrapper) -> Self {
         self.suite_builder = self.suite_builder.with_kem(kem);
         self
     }
 
+    /// Sets the Key Agreement algorithm for the protocol suite.
+    ///
+    /// 为协议套件设置密钥协商算法。
     pub fn with_key_agreement(mut self, ka: KeyAgreementAlgorithmWrapper) -> Self {
         self.suite_builder = self.suite_builder.with_key_agreement(ka);
         self
     }
 
+    /// Sets the Authenticated Encryption with Associated Data (AEAD) algorithm.
+    ///
+    /// 设置带有关联数据的认证加密 (AEAD) 算法。
     pub fn with_aead(mut self, aead: SymmetricAlgorithmWrapper) -> Self {
         self.suite_builder = self.suite_builder.with_aead(aead);
         self
     }
 
+    /// Sets the Key Derivation Function (KDF).
+    ///
+    /// 设置密钥派生函数 (KDF)。
     pub fn with_kdf(mut self, kdf: KdfKeyWrapper) -> Self {
         self.suite_builder = self.suite_builder.with_kdf(kdf);
         self
     }
 
     /// Builds the `HandshakeClient` in its initial `Ready` state.
+    ///
+    /// 构建处于初始 `Ready` 状态的 `HandshakeClient`。
     pub fn build(self) -> HandshakeClient<Ready> {
         HandshakeClient {
             state: PhantomData,
@@ -75,6 +108,8 @@ impl HandshakeClientBuilder {
 
 impl<S> HandshakeClient<S> {
     /// Returns a builder for the `HandshakeClient`.
+    ///
+    /// 返回一个 `HandshakeClient` 的构建器。
     pub fn builder() -> HandshakeClientBuilder {
         HandshakeClientBuilder::new()
     }
@@ -82,6 +117,11 @@ impl<S> HandshakeClient<S> {
 
 impl HandshakeClient<Ready> {
     /// Starts the handshake by creating a `ClientHello` message.
+    /// This transitions the client to the `AwaitingKemPublicKey` state,
+    /// waiting for the server's public key.
+    ///
+    /// 通过创建 `ClientHello` 消息来启动握手。
+    /// 这会将客户端转换到 `AwaitingKemPublicKey` 状态，等待服务器的公钥。
     pub fn start_handshake(self) -> (HandshakeMessage, HandshakeClient<AwaitingKemPublicKey>) {
         let client_hello = HandshakeMessage::ClientHello;
 
@@ -99,16 +139,35 @@ impl HandshakeClient<Ready> {
 impl HandshakeClient<AwaitingKemPublicKey> {
     /// Processes the `ServerHello` message, generates session keys,
     /// and creates a `ClientKeyExchange` message.
+    /// This method performs the client-side key exchange.
+    ///
+    /// It encapsulates a shared secret using the server's public key,
+    /// derives encryption and decryption keys, and sends the encapsulated
+    /// key to the server along with an optional initial encrypted payload.
+    ///
+    /// Upon successful completion, the client transitions to the `Established` state.
+    ///
+    /// 处理 `ServerHello` 消息，生成会话密钥，并创建 `ClientKeyExchange` 消息。
+    /// 此方法执行客户端的密钥交换。
+    ///
+    /// 它使用服务器的公钥封装共享密钥，派生加密和解密密钥，
+    /// 并将封装的密钥连同一个可选的初始加密负载一起发送到服务器。
+    ///
+    /// 成功完成后，客户端转换到 `Established` 状态。
     pub fn process_server_hello(
         self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
     ) -> Result<(HandshakeMessage, HandshakeClient<Established>)> {
+        // Extract the server's public key and KEM algorithm from the message.
+        // 从消息中提取服务器的公钥和 KEM 算法。
         let (server_pk, kem_algorithm) = match message {
             HandshakeMessage::ServerHello {
                 public_key,
                 kem_algorithm,
             } => (public_key, kem_algorithm),
+            // Return an error if the message is not a `ServerHello`.
+            // 如果消息不是 `ServerHello`，则返回错误。
             _ => return Err(HandshakeError::InvalidMessage),
         };
 
@@ -116,34 +175,56 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         let kdf = self.suite.kdf();
         let kem = kem_algorithm.into_asymmetric_wrapper();
 
-        // KEM: Encapsulate a shared secret.
+        // KEM: Encapsulate a shared secret using the server's public key.
+        // This generates a `shared_secret` (known only to the client for now)
+        // and an `encapsulated_key` (which will be sent to the server).
+        //
+        // KEM：使用服务器的公钥封装一个共享密钥。
+        // 这会生成一个 `shared_secret` (目前只有客户端知道)
+        // 和一个 `encapsulated_key` (将被发送到服务器)。
         let (shared_secret, encapsulated_key) = kem.encapsulate_key(&server_pk)?;
 
         // KDF: Define parameters for client-to-server key derivation.
+        // These parameters ensure that the derived keys are unique to this session.
+        //
+        // KDF：为客户端到服务器的密钥派生定义参数。
+        // 这些参数确保派生的密钥对于此会话是唯一的。
         let kdf_params = KdfParams {
             algorithm: kdf.algorithm(),
             salt: Some(b"seal-handshake-salt".to_vec()),
             info: Some(b"seal-handshake-c2s".to_vec()),
         };
 
-        // KDF: Derive encryption and decryption keys.
+        // KDF: Derive encryption and decryption keys from the shared secret.
+        // The `info` parameter is varied ("c2s" vs "s2c") to produce
+        // different keys for each direction (client-to-server and server-to-client).
+        //
+        // KDF：从共享密钥中派生加密和解密密钥。
+        // 通过改变 `info` 参数 ("c2s" vs "s2c")，为每个方向（客户端到服务器和服务器到客户端）
+        // 生成不同的密钥。
         let encryption_key = shared_secret.derive_key(
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
-            kdf_params.info.as_deref(), // c2s info
+            kdf_params.info.as_deref(), // "c2s" (client-to-server) info
             aead.algorithm(),
         )?;
         let decryption_key = shared_secret.derive_key(
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
-            Some(b"seal-handshake-s2c"), // s2c info
+            Some(b"seal-handshake-s2c"), // "s2c" (server-to-client) info
             aead.algorithm(),
         )?;
 
-        // DEM: Encrypt the initial payload using seal-flow.
+        // DEM: Encrypt the initial payload using the derived encryption key and `seal-flow`.
+        // This demonstrates sending initial data securely immediately after key exchange.
+        //
+        // DEM：使用派生的加密密钥和 `seal-flow` 加密初始负载。
+        // 这演示了在密钥交换后立即安全地发送初始数据。
         let aad = b"seal-handshake-aad";
         let params = SymmetricParamsBuilder::new(aead.algorithm(), 4096)
             .aad_hash(aad, Sha256::new())
+            // A unique nonce is required for each encryption.
+            // 每次加密都需要一个唯一的 nonce。
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
 
@@ -161,11 +242,17 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         .into_writer(Vec::new())?
         .encrypt_ordinary_to_vec(initial_payload.unwrap_or(&[]))?;
 
+        // Create the `ClientKeyExchange` message containing the encrypted payload and the encapsulated key.
+        //
+        // 创建 `ClientKeyExchange` 消息，其中包含加密的负载和封装的密钥。
         let key_exchange_msg = HandshakeMessage::ClientKeyExchange {
             encrypted_message,
             encapsulated_key,
         };
 
+        // Transition to the `Established` state, storing the derived keys.
+        //
+        // 转换到 `Established` 状态，并存储派生的密钥。
         let established_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
@@ -178,11 +265,21 @@ impl HandshakeClient<AwaitingKemPublicKey> {
 }
 
 impl HandshakeClient<Established> {
-    /// Encrypts application data using the established session key.
+    /// Encrypts application data using the established client-to-server session key.
+    ///
+    /// This method should be called after the handshake is established to send secure data to the server.
+    ///
+    /// 使用已建立的客户端到服务器的会话密钥来加密应用数据。
+    ///
+    /// 此方法应在握手建立后调用，以向服务器发送安全数据。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
         let key = self
             .encryption_key
             .as_ref()
+            // This error indicates a logic flaw, as this method should not be callable
+            // without an encryption key.
+            //
+            // 这个错误表示存在逻辑缺陷，因为在没有加密密钥的情况下不应能调用此方法。
             .ok_or(HandshakeError::InvalidState)?;
 
         let aead = self.suite.aead();
@@ -192,7 +289,10 @@ impl HandshakeClient<Established> {
             .build();
 
         // In a real application, the header would be part of a larger protocol message.
-        // For simplicity, we create a dummy header here.
+        // For simplicity, we create a dummy header here to structure the encrypted data.
+        //
+        // 在实际应用中，头部将是更大协议消息的一部分。
+        // 为简单起见，我们在这里创建一个虚拟头部来构造加密数据。
         let kdf_params = KdfParams {
             algorithm: self.suite.kdf().algorithm(),
             salt: Some(b"seal-handshake-salt".to_vec()),
@@ -210,7 +310,10 @@ impl HandshakeClient<Established> {
             .map_err(Into::into)
     }
 
-    /// Decrypts a `ServerFinished` message.
+    /// Decrypts a message from the server (e.g., `ServerFinished`) using the
+    /// established server-to-client session key.
+    ///
+    /// 使用已建立的服务器到客户端的会话密钥来解密来自服务器的消息（例如 `ServerFinished`）。
     pub fn decrypt(&self, message: HandshakeMessage, aad: &[u8]) -> Result<Vec<u8>> {
         let encrypted_message = match message {
             HandshakeMessage::ServerFinished {
@@ -224,8 +327,14 @@ impl HandshakeClient<Established> {
             .as_ref()
             .ok_or(HandshakeError::InvalidState)?;
 
+        // Prepare the decryption by parsing the header from the encrypted message.
+        //
+        // 通过从加密消息中解析头部来准备解密。
         let pending_decryption = prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message)?;
 
+        // Perform the decryption and authentication.
+        //
+        // 执行解密和身份验证。
         pending_decryption
             .decrypt_ordinary(Cow::Borrowed(key), Some(aad.to_vec()))
             .map_err(Into::into)
