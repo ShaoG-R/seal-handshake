@@ -12,6 +12,7 @@ use seal_flow::crypto::traits::{
 };
 use seal_flow::crypto::wrappers::asymmetric::kem::{KemAlgorithmWrapper};
 use seal_flow::crypto::wrappers::asymmetric::key_agreement::KeyAgreementAlgorithmWrapper;
+use seal_flow::crypto::wrappers::asymmetric::signature::SignatureAlgorithmWrapper;
 use seal_flow::crypto::wrappers::kdf::key::KdfKeyWrapper;
 use seal_flow::crypto::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator, SealFlowHeader};
@@ -114,6 +115,14 @@ impl HandshakeServerBuilder {
     /// 为协议套件设置密钥封装机制 (KEM)。
     pub fn with_kem(mut self, kem: KemAlgorithmWrapper) -> Self {
         self.suite_builder = self.suite_builder.with_kem(kem);
+        self
+    }
+
+    /// Sets the Signature algorithm for the protocol suite.
+    ///
+    /// 为协议套件设置签名算法。
+    pub fn with_signature(mut self, signature: SignatureAlgorithmWrapper) -> Self {
+        self.suite_builder = self.suite_builder.with_signature(signature);
         self
     }
 

@@ -13,6 +13,7 @@ use seal_flow::crypto::traits::{
 };
 use seal_flow::crypto::wrappers::asymmetric::kem::KemAlgorithmWrapper;
 use seal_flow::crypto::wrappers::asymmetric::key_agreement::KeyAgreementAlgorithmWrapper;
+use seal_flow::crypto::wrappers::asymmetric::signature::SignatureAlgorithmWrapper;
 use seal_flow::crypto::wrappers::kdf::key::KdfKeyWrapper;
 use seal_flow::crypto::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
@@ -77,6 +78,14 @@ impl HandshakeClientBuilder {
         public_key: TypedSignaturePublicKey,
     ) -> Self {
         self.server_signature_public_key = Some(public_key);
+        self
+    }
+
+    /// Sets the Signature algorithm for the protocol suite.
+    ///
+    /// 为协议套件设置签名算法。
+    pub fn with_signature(mut self, signature: SignatureAlgorithmWrapper) -> Self {
+        self.suite_builder = self.suite_builder.with_signature(signature);
         self
     }
 
@@ -181,6 +190,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
+        aad: Option<&[u8]>,
     ) -> Result<(HandshakeMessage, HandshakeClient<Established>)> {
         // Extract the server's public key and KEM algorithm from the message.
         // 从消息中提取服务器的公钥和 KEM 算法。
@@ -261,7 +271,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         //
         // DEM：使用派生的加密密钥和 `seal-flow` 加密初始负载。
         // 这演示了在密钥交换后立即安全地发送初始数据。
-        let aad = b"seal-handshake-aad";
+        let aad = aad.unwrap_or(b"seal-handshake-aad");
         let params = SymmetricParamsBuilder::new(aead.algorithm(), 4096)
             .aad_hash(aad, Sha256::new())
             // A unique nonce is required for each encryption.
@@ -356,13 +366,15 @@ impl HandshakeClient<Established> {
     /// established server-to-client session key.
     ///
     /// 使用已建立的服务器到客户端的会话密钥来解密来自服务器的消息（例如 `ServerFinished`）。
-    pub fn decrypt(&self, message: HandshakeMessage, aad: &[u8]) -> Result<Vec<u8>> {
+    pub fn decrypt(&self, message: HandshakeMessage, aad: Option<&[u8]>) -> Result<Vec<u8>> {
         let encrypted_message = match message {
             HandshakeMessage::ServerFinished {
                 encrypted_message,
             } => encrypted_message,
             _ => return Err(HandshakeError::InvalidMessage),
         };
+
+        let aad = aad.unwrap_or(b"seal-handshake-aad");
 
         let key = self
             .decryption_key

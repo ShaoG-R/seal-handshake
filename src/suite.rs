@@ -11,7 +11,7 @@ use seal_flow::crypto::wrappers::{
 #[derive(Debug, Clone)]
 pub struct ProtocolSuite {
     kem: KemAlgorithmWrapper,
-    key_agreement: KeyAgreementAlgorithmWrapper,
+    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
     signature: SignatureAlgorithmWrapper,
     aead: SymmetricAlgorithmWrapper,
     kdf: KdfKeyWrapper,
@@ -59,9 +59,7 @@ impl ProtocolSuiteBuilder {
     pub fn build(self) -> ProtocolSuite {
         ProtocolSuite {
             kem: self.kem.expect("KEM algorithm must be set"),
-            key_agreement: self
-                .key_agreement
-                .expect("Key agreement algorithm must be set"),
+            key_agreement: self.key_agreement,
             signature: self.signature.expect("Signature algorithm must be set"),
             aead: self.aead.expect("AEAD algorithm must be set"),
             kdf: self.kdf.expect("KDF algorithm must be set"),
@@ -74,7 +72,7 @@ impl ProtocolSuite {
         &self.kem
     }
 
-    pub fn key_agreement(&self) -> &KeyAgreementAlgorithmWrapper {
+    pub fn key_agreement(&self) -> &Option<KeyAgreementAlgorithmWrapper> {
         &self.key_agreement
     }
 
