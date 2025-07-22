@@ -139,11 +139,6 @@ impl ProtocolSuite<WithSignature> {
     }
 }
 
-impl ProtocolSuite<WithoutSignature> {
-    pub fn signature(&self) -> () {
-        ()
-    }
-}
 
 
 // --- Typestate Builder using Concrete Structs ---
