@@ -13,7 +13,7 @@ use seal_flow::{
         prelude::*,
         traits::{AeadAlgorithmTrait, KemAlgorithmTrait},
         wrappers::{
-            asymmetric::{kem::KemAlgorithmWrapper, signature::SignatureWrapper},
+            asymmetric::signature::SignatureWrapper,
         },
     },
     prelude::EncryptionConfigurator,
@@ -39,7 +39,7 @@ impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
         HandshakeMessage,
         HandshakeClient<Established, WithSignature>,
     )> {
-        let (server_kem_pk, kem_algorithm, server_key_agreement_pk, signature) =
+        let (server_kem_pk, server_key_agreement_pk, signature) =
             common_server_hello_processing(&mut self.transcript, &message)?;
 
         // Verify the signature.
@@ -57,7 +57,6 @@ impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
         complete_server_hello_processing(
             self,
             server_kem_pk,
-            kem_algorithm,
             server_key_agreement_pk,
             initial_payload,
             aad,
@@ -82,14 +81,13 @@ impl HandshakeClient<AwaitingKemPublicKey, WithoutSignature> {
         HandshakeMessage,
         HandshakeClient<Established, WithoutSignature>,
     )> {
-        let (server_kem_pk, kem_algorithm, server_key_agreement_pk, _) =
+        let (server_kem_pk, server_key_agreement_pk, _) =
             common_server_hello_processing(&mut self.transcript, &message)?;
 
         // Delegate to the common logic for key derivation and message creation.
         complete_server_hello_processing(
             self,
             server_kem_pk,
-            kem_algorithm,
             server_key_agreement_pk,
             initial_payload,
             aad,
@@ -105,7 +103,6 @@ fn common_server_hello_processing(
     message: &HandshakeMessage,
 ) -> Result<(
     TypedKemPublicKey,
-    KemAlgorithmWrapper,
     Option<TypedKeyAgreementPublicKey>,
     Option<SignatureWrapper>,
 )> {
@@ -114,12 +111,10 @@ fn common_server_hello_processing(
     match message {
         HandshakeMessage::ServerHello {
             kem_public_key,
-            kem_algorithm,
             key_agreement_public_key,
             signature,
         } => Ok((
             kem_public_key.clone(),
-            kem_algorithm.clone().into_wrapper(),
             key_agreement_public_key.clone(),
             signature.clone(),
         )),
@@ -135,7 +130,6 @@ fn common_server_hello_processing(
 fn complete_server_hello_processing<Sig: SignaturePresence>(
     mut client: HandshakeClient<AwaitingKemPublicKey, Sig>,
     server_kem_pk: TypedKemPublicKey,
-    kem_algorithm: KemAlgorithmWrapper,
     server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
     initial_payload: Option<&[u8]>,
     aad: Option<&[u8]>,
@@ -144,7 +138,6 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
     let (session_keys, encapsulated_key) = derive_session_keys_from_server_hello(
         &client,
         server_kem_pk,
-        kem_algorithm,
         server_key_agreement_pk,
     )?;
 
@@ -181,10 +174,9 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
 fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
     client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
     server_kem_pk: TypedKemPublicKey,
-    kem_algorithm: KemAlgorithmWrapper,
     server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
 ) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
-    let kem = kem_algorithm;
+    let kem = client.suite.kem();
 
     // KEM: Encapsulate a new shared secret against the server's public KEM key.
     let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
@@ -233,7 +225,6 @@ fn create_client_key_exchange<Sig: SignaturePresence>(
 
     let header = EncryptedHeader {
         params,
-        kem_algorithm: client.suite.kem().algorithm(),
         kdf_params,
         signature_algorithm: None,
         signed_transcript_hash: None,

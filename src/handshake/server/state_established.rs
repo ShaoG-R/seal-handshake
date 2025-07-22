@@ -68,7 +68,6 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
         let header = EncryptedHeader {
                 params,
                 // These fields are not relevant for ticket encryption but are part of the struct.
-            kem_algorithm: self.suite.kem().algorithm(),
             kdf_params: KdfParams {
                 algorithm: self.suite.kdf().algorithm(),
                 salt: None,
@@ -159,7 +158,6 @@ fn common_encrypt<Sig: SignaturePresence>(
     };
     let header = EncryptedHeader {
         params,
-        kem_algorithm: server.suite.kem().algorithm(),
         kdf_params,
         signature_algorithm,
         signed_transcript_hash,

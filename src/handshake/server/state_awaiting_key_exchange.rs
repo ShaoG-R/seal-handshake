@@ -49,7 +49,6 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
             &self,
             &kem_key_pair,
             &encapsulated_key,
-            pending_decryption.header(),
         )?;
 
         let initial_payload = decrypt_initial_payload(
@@ -95,9 +94,8 @@ fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
     server: &HandshakeServer<AwaitingKeyExchange, Sig>,
     kem_key_pair: &TypedKemKeyPair,
     encapsulated_key: &EncapsulatedKey,
-    header: &EncryptedHeader,
 ) -> Result<SessionKeysAndMaster> {
-    let kem = header.kem_algorithm.into_wrapper();
+    let kem = kem_key_pair.algorithm().into_wrapper();
     let shared_secret =
         kem.decapsulate_key(&kem_key_pair.private_key(), encapsulated_key)?;
 

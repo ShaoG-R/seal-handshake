@@ -53,7 +53,6 @@ impl<Sig: SignaturePresence> HandshakeClient<Established, Sig> {
         };
         let header = EncryptedHeader {
             params,
-            kem_algorithm: self.suite.kem().algorithm(),
             kdf_params,
             signature_algorithm: None,
             signed_transcript_hash: None,

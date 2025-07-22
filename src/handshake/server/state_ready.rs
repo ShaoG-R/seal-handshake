@@ -5,7 +5,6 @@ use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{HandshakeMessage, SessionTicket};
 use seal_flow::crypto::{
     keys::asymmetric::kem::SharedSecret,
-    traits::KemAlgorithmTrait,
 };
 use std::{
     marker::PhantomData,
@@ -85,7 +84,6 @@ impl HandshakeServer<Ready, WithSignature> {
 
         let server_hello = HandshakeMessage::ServerHello {
             kem_public_key,
-            kem_algorithm: kem.algorithm(),
             key_agreement_public_key: server_key_agreement_pk,
             signature: Some(signature),
         };
@@ -165,7 +163,6 @@ impl HandshakeServer<Ready, WithoutSignature> {
 
         let server_hello = HandshakeMessage::ServerHello {
             kem_public_key,
-            kem_algorithm: kem.algorithm(),
             key_agreement_public_key: server_key_agreement_pk,
             signature: None,
         };
