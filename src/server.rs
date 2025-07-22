@@ -3,13 +3,14 @@
 
 use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
-use crate::suite::ProtocolSuite;
+use crate::suite::{KeyAgreementEngine, ProtocolSuite};
 use crate::state::{AwaitingKeyExchange, Established, Ready};
 use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::bincode;
+use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    KemAlgorithmTrait, SignatureAlgorithmTrait, AeadAlgorithmTrait,
+    AeadAlgorithmTrait, KemAlgorithmTrait, KeyAgreementAlgorithmTrait, SignatureAlgorithmTrait,
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator, SealFlowHeader};
 use seal_flow::rand::rngs::OsRng;
@@ -52,6 +53,10 @@ pub struct HandshakeServer<S> {
     /// 服务器为此会话生成的临时 KEM 密钥对。
     /// 它在密钥交换后被消耗。
     kem_key_pair: Option<TypedKemKeyPair>,
+    /// The server's ephemeral key agreement key pair, if used.
+    key_agreement_engine: Option<KeyAgreementEngine>,
+    /// The shared secret derived from key agreement, if used.
+    agreement_shared_secret: Option<SharedSecret>,
     /// Derived key for encryption (server-to-client).
     ///
     /// 用于加密（服务器到客户端）的派生密钥。
@@ -78,6 +83,8 @@ impl HandshakeServer<Ready> {
             transcript_hasher: Sha256::new(),
             signature_key_pair,
             kem_key_pair: None,
+            key_agreement_engine: None,
+            agreement_shared_secret: None,
             encryption_key: None,
             decryption_key: None,
         }
@@ -107,25 +114,59 @@ impl HandshakeServer<Ready> {
         self.transcript_hasher.update(&client_hello_bytes);
 
         match message {
-            HandshakeMessage::ClientHello => {
+            HandshakeMessage::ClientHello {
+                key_agreement_public_key: client_key_agreement_pk,
+            } => {
+                // KEM key generation (always happens)
                 let kem = self.suite.kem();
                 let kem_key_pair = kem.generate_keypair()?;
-                let public_key = kem_key_pair.public_key();
+                let kem_public_key = kem_key_pair.public_key().clone();
 
-                // Sign the ephemeral public key with the long-term identity key, if a signature scheme is provided.
-                // 如果提供了签名方案，则使用长期身份密钥对临时公钥进行签名。
+                // Key Agreement, if requested by the client and supported by the server.
+                let (server_key_agreement_pk, key_agreement_engine, agreement_shared_secret) =
+                    if let (Some(client_pk), Some(key_agreement)) =
+                        (client_key_agreement_pk, self.suite.key_agreement())
+                    {
+                        let server_key_pair = key_agreement.generate_keypair()?;
+                        let shared_secret = key_agreement
+                            .agree(&server_key_pair.private_key(), &client_pk)?;
+                        let engine = KeyAgreementEngine {
+                            key_pair: server_key_pair,
+                            wrapper: key_agreement.clone(),
+                        };
+                        (Some(engine.key_pair.public_key().clone()), Some(engine), Some(shared_secret))
+                    } else {
+                        (None, None, None)
+                    };
+
+                // Sign the ephemeral public keys with the long-term identity key.
                 let signature = if let Some(signer) = self.suite.signature() {
-                    let data_to_sign =
-                        bincode::encode_to_vec(&public_key, bincode::config::standard())
+                    let data_to_sign = {
+                        let kem_pk_bytes =
+                            bincode::encode_to_vec(&kem_public_key, bincode::config::standard())
+                                .map_err(HandshakeError::from)?;
+                        if let Some(key_agreement_pk) = &server_key_agreement_pk {
+                            let mut combined = kem_pk_bytes;
+                            let key_agreement_pk_bytes = bincode::encode_to_vec(
+                                key_agreement_pk,
+                                bincode::config::standard(),
+                            )
                             .map_err(HandshakeError::from)?;
+                            combined.extend_from_slice(&key_agreement_pk_bytes);
+                            combined
+                        } else {
+                            kem_pk_bytes
+                        }
+                    };
                     Some(signer.sign(&data_to_sign, &self.signature_key_pair.private_key())?)
                 } else {
                     None
                 };
 
                 let server_hello = HandshakeMessage::ServerHello {
-                    public_key: public_key.clone(),
+                    kem_public_key,
                     kem_algorithm: kem.algorithm(),
+                    key_agreement_public_key: server_key_agreement_pk,
                     signature,
                 };
 
@@ -141,6 +182,8 @@ impl HandshakeServer<Ready> {
                     transcript_hasher: self.transcript_hasher,
                     signature_key_pair: self.signature_key_pair,
                     kem_key_pair: Some(kem_key_pair),
+                    key_agreement_engine,
+                    agreement_shared_secret: agreement_shared_secret.map(|s| SharedSecret(s.into())),
                     encryption_key: None,
                     decryption_key: None,
                 };
@@ -213,10 +256,19 @@ impl HandshakeServer<AwaitingKeyExchange> {
         let shared_secret =
             kem.decapsulate_key(&kem_key_pair.private_key(), &encapsulated_key)?;
 
+        // Combine with the key agreement secret, if it exists.
+        let final_shared_secret = if let Some(agreement_secret) = self.agreement_shared_secret {
+            let mut combined = agreement_secret.to_vec();
+            combined.extend_from_slice(shared_secret.as_ref());
+            SharedSecret(combined.into())
+        } else {
+            shared_secret
+        };
+
         // KDF: Derive the client-to-server decryption key using parameters from the client.
         // KDF：使用来自客户端的参数派生客户端到服务器的解密密钥。
         let kdf_params = &header.kdf_params;
-        let decryption_key = shared_secret.derive_key(
+        let decryption_key = final_shared_secret.derive_key(
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
             kdf_params.info.as_deref(), // Uses "c2s" info from client
@@ -230,7 +282,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
 
         // KDF: Derive the server-to-client encryption key with a different "info" parameter.
         // KDF：使用不同的 "info" 参数派生服务器到客户端的加密密钥。
-        let encryption_key = shared_secret.derive_key(
+        let encryption_key = final_shared_secret.derive_key(
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
             Some(b"seal-handshake-s2c"), // "s2c" (server-to-client) info
@@ -245,6 +297,8 @@ impl HandshakeServer<AwaitingKeyExchange> {
             transcript_hasher: self.transcript_hasher,
             signature_key_pair: self.signature_key_pair,
             kem_key_pair: None, // Consumed
+            key_agreement_engine: self.key_agreement_engine,
+            agreement_shared_secret: None, // Consumed
             encryption_key: Some(encryption_key),
             decryption_key: Some(decryption_key),
         };

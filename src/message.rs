@@ -3,7 +3,10 @@ use seal_flow::common::header::{SealFlowHeader, AeadParams};
 use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
 use seal_flow::crypto::algorithms::asymmetric::signature::SignatureAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
-use seal_flow::crypto::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSignaturePublicKey, TypedAsymmetricKeyTrait};
+use seal_flow::crypto::prelude::{
+    EncapsulatedKey, TypedAsymmetricKeyTrait, TypedKemPublicKey, TypedKeyAgreementPublicKey,
+    TypedSignaturePublicKey,
+};
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
 use serde::{Deserialize, Serialize};
@@ -13,15 +16,18 @@ use serde::{Deserialize, Serialize};
 #[bincode(crate = "bincode")]
 pub enum HandshakeMessage {
     /// Client -> Server: Initiates handshake, requesting the server's public key.
-    ClientHello,
+    /// Can optionally include a KeyAgreement public key.
+    ClientHello {
+        key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
+    },
 
     /// Server -> Client: Provides the server's public key and supported algorithms.
     ServerHello {
-        public_key: TypedKemPublicKey,
+        kem_public_key: TypedKemPublicKey,
         kem_algorithm: KemAlgorithm,
-        /// The signature of the server's ephemeral public key, signed by its long-term identity key.
-        ///
-        /// 服务器临时公钥的签名，由其长期身份密钥签署。
+        key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
+        /// The signature of the server's ephemeral public keys (KEM and KeyAgreement),
+        /// signed by its long-term identity key.
         signature: Option<SignatureWrapper>,
     },
 
@@ -58,10 +64,6 @@ pub struct EncryptedHeader {
 impl SealFlowHeader for EncryptedHeader {
     fn aead_params(&self) -> &AeadParams {
         &self.params
-    }
-
-    fn extra_data(&self) -> Option<&[u8]> {
-        None
     }
 
     /// Verifies the handshake transcript signature within the header.

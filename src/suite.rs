@@ -1,10 +1,20 @@
-use seal_flow::crypto::wrappers::{
-    asymmetric::kem::KemAlgorithmWrapper,
-    asymmetric::key_agreement::KeyAgreementAlgorithmWrapper,
-    asymmetric::signature::SignatureAlgorithmWrapper,
-    kdf::key::KdfKeyWrapper,
-    aead::AeadAlgorithmWrapper,
+use seal_flow::crypto::{
+    wrappers::{
+        aead::AeadAlgorithmWrapper,
+        asymmetric::{
+            kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper, signature::SignatureAlgorithmWrapper
+        },
+        kdf::key::KdfKeyWrapper,
+    },
+    prelude::TypedKeyAgreementKeyPair,
 };
+
+/// A helper struct to carry the key agreement key pair during the handshake.
+#[derive(Debug)]
+pub struct KeyAgreementEngine {
+    pub key_pair: TypedKeyAgreementKeyPair,
+    pub wrapper: KeyAgreementAlgorithmWrapper,
+}
 
 // --- Final ProtocolSuite ---
 #[derive(Debug, Clone)]

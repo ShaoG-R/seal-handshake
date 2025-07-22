@@ -1063,9 +1063,9 @@ dependencies = [
 
 [[package]]
 name = "seal-crypto"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59d16890b15c10ea5643c9be810f3c06d157751bd9c1f8d39317cfcecea46817"
+checksum = "1b6a8fb7d39fddba43be322de69372500e12239ed29edc9df09788e72f930368"
 dependencies = [
  "aes-gcm",
  "argon2",
