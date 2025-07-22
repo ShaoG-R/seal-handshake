@@ -22,7 +22,6 @@ use seal_flow::crypto::traits::{
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
 use seal_flow::rand::TryRngCore;
-use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
@@ -309,7 +308,7 @@ impl HandshakeServer<Established> {
 
         let aead = self.suite.aead();
         let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
-            .aad_hash(aad, Sha256::new())
+            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
 

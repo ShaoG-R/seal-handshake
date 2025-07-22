@@ -1120,7 +1120,6 @@ dependencies = [
  "rayon",
  "seal-crypto-wrapper",
  "serde",
- "sha2",
  "thiserror",
  "tokio",
 ]
@@ -1131,6 +1130,7 @@ version = "0.1.0"
 dependencies = [
  "seal-flow",
  "serde",
+ "sha2",
  "thiserror",
 ]
 

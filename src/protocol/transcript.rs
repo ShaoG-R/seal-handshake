@@ -9,7 +9,7 @@
 //! 确保了客户端和服务器之间的一致性。
 use crate::protocol::message::HandshakeMessage;
 use seal_flow::crypto::bincode;
-use seal_flow::sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
 pub struct Transcript {

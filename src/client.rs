@@ -20,7 +20,6 @@ use seal_flow::crypto::traits::{
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
 use seal_flow::rand::TryRngCore;
-use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
@@ -213,7 +212,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         let aad = aad.unwrap_or(b"seal-handshake-aad");
         let aead = self.suite.aead();
         let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
-            .aad_hash(aad, Sha256::new())
+            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
             // A unique nonce is required for each encryption.
             // 每次加密都需要一个唯一的 nonce。
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
@@ -291,7 +290,7 @@ impl HandshakeClient<Established> {
 
         let aead = self.suite.aead();
         let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
-            .aad_hash(aad, Sha256::new())
+            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
 
