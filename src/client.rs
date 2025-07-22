@@ -2,13 +2,13 @@
 //！ 实现握手协议状态机的客户端。
 
 use crate::error::{HandshakeError, Result};
+use crate::keys::derive_session_keys;
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::state::{AwaitingKemPublicKey, Established, Ready};
 use crate::suite::{KeyAgreementEngine, ProtocolSuite};
 use crate::transcript::Transcript;
 use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::bincode;
-use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
     AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait,
@@ -196,8 +196,6 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         }
 
         // --- Key Derivation ---
-        let aead = self.suite.aead();
-        let kdf = self.suite.kdf();
         let kem = kem_algorithm.into_wrapper();
 
         // KEM: Encapsulate a shared secret.
@@ -213,34 +211,12 @@ impl HandshakeClient<AwaitingKemPublicKey> {
                 None
             };
 
-        // Combine secrets: [agreement_secret || kem_secret]
-        let final_shared_secret = if let Some(agreement_secret) = shared_secret_agreement {
-            let mut combined = agreement_secret.to_vec();
-            combined.extend_from_slice(shared_secret_kem.as_ref());
-            SharedSecret(combined.into())
-        } else {
-            shared_secret_kem
-        };
-
-        // KDF: Define parameters for client-to-server key derivation.
-        let kdf_params = KdfParams {
-            algorithm: kdf.algorithm(),
-            salt: Some(b"seal-handshake-salt".to_vec()),
-            info: Some(b"seal-handshake-c2s".to_vec()),
-        };
-
         // KDF: Derive encryption and decryption keys from the final shared secret.
-        let encryption_key = final_shared_secret.derive_key(
-            kdf_params.algorithm,
-            kdf_params.salt.as_deref(),
-            kdf_params.info.as_deref(), // "c2s"
-            aead.algorithm(),
-        )?;
-        let decryption_key = final_shared_secret.derive_key(
-            kdf_params.algorithm,
-            kdf_params.salt.as_deref(),
-            Some(b"seal-handshake-s2c"), // "s2c"
-            aead.algorithm(),
+        let session_keys = derive_session_keys(
+            &self.suite,
+            shared_secret_kem,
+            shared_secret_agreement,
+            true, // is_client = true
         )?;
 
         // DEM: Encrypt the initial payload using the derived encryption key and `seal-flow`.
@@ -249,12 +225,19 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         // DEM：使用派生的加密密钥和 `seal-flow` 加密初始负载。
         // 这演示了在密钥交换后立即安全地发送初始数据。
         let aad = aad.unwrap_or(b"seal-handshake-aad");
+        let aead = self.suite.aead();
         let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
             .aad_hash(aad, Sha256::new())
             // A unique nonce is required for each encryption.
             // 每次加密都需要一个唯一的 nonce。
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
+
+        let kdf_params = KdfParams {
+            algorithm: self.suite.kdf().algorithm(),
+            salt: Some(b"seal-handshake-salt".to_vec()),
+            info: Some(b"seal-handshake-c2s".to_vec()),
+        };
 
         let header = EncryptedHeader {
             params,
@@ -267,7 +250,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
 
         let encrypted_message = EncryptionConfigurator::new(
             header,
-            Cow::Borrowed(&encryption_key),
+            Cow::Borrowed(&session_keys.encryption_key),
             Some(aad.to_vec()),
         )
         .into_writer(Vec::new())?
@@ -294,8 +277,8 @@ impl HandshakeClient<AwaitingKemPublicKey> {
             transcript: self.transcript,
             key_agreement_engine: self.key_agreement_engine,
             server_signature_public_key: self.server_signature_public_key,
-            encryption_key: Some(encryption_key),
-            decryption_key: Some(decryption_key),
+            encryption_key: Some(session_keys.encryption_key),
+            decryption_key: Some(session_keys.decryption_key),
         };
 
         Ok((key_exchange_msg, established_client))

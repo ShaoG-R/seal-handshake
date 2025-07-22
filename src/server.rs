@@ -2,6 +2,7 @@
 //! 实现握手协议状态机的服务器端。
 
 use crate::error::{HandshakeError, Result};
+use crate::keys::derive_session_keys;
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::suite::{KeyAgreementEngine, ProtocolSuite};
 use crate::state::{AwaitingKeyExchange, Established, Ready};
@@ -13,7 +14,7 @@ use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
     AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait,
 };
-use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator, SealFlowHeader};
+use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
 use seal_flow::rand::TryRngCore;
 use seal_flow::sha2::{Digest, Sha256};
@@ -251,38 +252,18 @@ impl HandshakeServer<AwaitingKeyExchange> {
         let shared_secret =
             kem.decapsulate_key(&kem_key_pair.private_key(), &encapsulated_key)?;
 
-        // Combine with the key agreement secret, if it exists.
-        let final_shared_secret = if let Some(agreement_secret) = self.agreement_shared_secret {
-            let mut combined = agreement_secret.to_vec();
-            combined.extend_from_slice(shared_secret.as_ref());
-            SharedSecret(combined.into())
-        } else {
-            shared_secret
-        };
-
-        // KDF: Derive the client-to-server decryption key using parameters from the client.
-        // KDF：使用来自客户端的参数派生客户端到服务器的解密密钥。
-        let kdf_params = &header.kdf_params;
-        let decryption_key = final_shared_secret.derive_key(
-            kdf_params.algorithm,
-            kdf_params.salt.as_deref(),
-            kdf_params.info.as_deref(), // Uses "c2s" info from client
-            header.aead_params().algorithm(),
+        // KDF: Derive session keys from the shared secrets.
+        let session_keys = derive_session_keys(
+            &self.suite,
+            shared_secret,
+            self.agreement_shared_secret.take(),
+            false, // is_client = false
         )?;
 
         // DEM: Decrypt the initial payload sent by the client.
         // DEM：解密客户端发送的初始负载。
-        let initial_payload =
-            pending_decryption.decrypt_ordinary(Cow::Borrowed(&decryption_key), Some(aad.to_vec()))?;
-
-        // KDF: Derive the server-to-client encryption key with a different "info" parameter.
-        // KDF：使用不同的 "info" 参数派生服务器到客户端的加密密钥。
-        let encryption_key = final_shared_secret.derive_key(
-            kdf_params.algorithm,
-            kdf_params.salt.as_deref(),
-            Some(b"seal-handshake-s2c"), // "s2c" (server-to-client) info
-            header.aead_params().algorithm(),
-        )?;
+        let initial_payload = pending_decryption
+            .decrypt_ordinary(Cow::Borrowed(&session_keys.decryption_key), Some(aad.to_vec()))?;
 
         // Transition to the `Established` state with the derived session keys.
         // 使用派生的会话密钥转换到 `Established` 状态。
@@ -294,8 +275,8 @@ impl HandshakeServer<AwaitingKeyExchange> {
             kem_key_pair: None, // Consumed
             key_agreement_engine: self.key_agreement_engine,
             agreement_shared_secret: None, // Consumed
-            encryption_key: Some(encryption_key),
-            decryption_key: Some(decryption_key),
+            encryption_key: Some(session_keys.encryption_key),
+            decryption_key: Some(session_keys.decryption_key),
         };
 
         Ok((initial_payload, established_server))
