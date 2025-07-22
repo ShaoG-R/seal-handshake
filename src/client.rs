@@ -2,12 +2,16 @@
 //！ 实现握手协议状态机的客户端。
 
 use crate::error::{HandshakeError, Result};
-use crate::keys::derive_session_keys;
-use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
-use crate::signature::verify_ephemeral_keys;
-use crate::state::{AwaitingKemPublicKey, Established, Ready};
-use crate::suite::{KeyAgreementEngine, ProtocolSuite};
-use crate::transcript::Transcript;
+use crate::crypto::{
+    keys::derive_session_keys,
+    signature::verify_ephemeral_keys,
+    suite::{KeyAgreementEngine, ProtocolSuite},
+};
+use crate::protocol::{
+    message::{EncryptedHeader, HandshakeMessage, KdfParams},
+    state::{AwaitingKemPublicKey, Established, Ready},
+    transcript::Transcript,
+};
 use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{

@@ -10,7 +10,7 @@
 //! 它确保双方使用相同的参数派生出相同的会话密钥。
 
 use crate::error::Result;
-use crate::suite::ProtocolSuite;
+use crate::crypto::suite::ProtocolSuite;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::AeadAlgorithmTrait;

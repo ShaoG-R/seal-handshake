@@ -1,11 +1,7 @@
 pub mod client;
 pub mod server;
 pub mod error;
-pub mod message;
-pub mod signature;
-pub mod keys;
-pub mod state;
-pub mod suite;
-pub mod transcript;
+pub mod crypto;
+pub mod protocol;
 
 pub use seal_flow::crypto::bincode;

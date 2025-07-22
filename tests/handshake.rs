@@ -4,14 +4,14 @@
 use seal_handshake::client::HandshakeClient;
 use seal_handshake::error::Result;
 use seal_handshake::server::HandshakeServer;
-use seal_handshake::suite::ProtocolSuite;
+use seal_handshake::crypto::suite::ProtocolSuite;
 use seal_flow::crypto::algorithms::{
     asymmetric::{kem::KemAlgorithm, signature::SignatureAlgorithm},
     kdf::key::KdfKeyAlgorithm,
     aead::AeadAlgorithm,
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
-use seal_handshake::message::HandshakeMessage;
+use seal_handshake::protocol::message::HandshakeMessage;
 
 #[test]
 fn test_full_handshake_and_data_exchange() -> Result<()> {

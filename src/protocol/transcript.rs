@@ -7,7 +7,7 @@
 //!
 //! 此结构体集中了更新和最终确定握手记录哈希的逻辑，
 //! 确保了客户端和服务器之间的一致性。
-use crate::message::HandshakeMessage;
+use crate::protocol::message::HandshakeMessage;
 use seal_flow::crypto::bincode;
 use seal_flow::sha2::{Digest, Sha256};
 
