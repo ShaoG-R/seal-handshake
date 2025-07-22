@@ -15,38 +15,34 @@ use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::AeadAlgorithmTrait;
 
-/// Holds the derived keys for an established session.
+/// Holds the derived keys and the master secret for an established session.
 ///
-/// 保存已建立会话的派生密钥。
-pub struct SessionKeys {
+/// 保存已建立会话的派生密钥和主密钥。
+pub struct SessionKeysAndMaster {
     pub encryption_key: TypedAeadKey,
     pub decryption_key: TypedAeadKey,
+    pub master_secret: SharedSecret,
 }
 
-/// Derives session keys for either the client or the server.
+/// Derives session keys and a master secret.
 ///
-/// This function combines the KEM secret and an optional key agreement secret,
-/// then uses the KDF specified in the protocol suite to generate two keys:
-/// one for client-to-server communication ("c2s") and one for server-to-client ("s2c").
+/// It combines the current handshake's secret with an optional resumption secret
+/// to generate a new master secret, which is then used to derive session keys.
 ///
-/// The `is_client` flag determines which key is assigned for encryption and which for decryption.
+/// 派生会话密钥和主密钥。
 ///
-/// 为客户端或服务器派生会话密钥。
-///
-/// 此函数结合了 KEM 密钥和可选的密钥协商密钥，
-/// 然后使用协议套件中指定的 KDF 生成两个密钥：
-/// 一个用于客户端到服务器的通信（"c2s"），另一个用于服务器到客户端的通信（"s2c"）。
-///
-/// `is_client` 标志决定了哪个密钥用于加密，哪个用于解密。
+/// 它将当前握手的密钥与一个可选的恢复密钥结合起来
+/// 以生成一个新的主密钥，然后用该主密钥派生会话密钥。
 pub fn derive_session_keys<S: SignaturePresence>(
     suite: &ProtocolSuite<S>,
     kem_secret: SharedSecret,
     agreement_secret: Option<SharedSecret>,
+    resumption_master_secret: Option<SharedSecret>,
     is_client: bool,
-) -> Result<SessionKeys> {
-    // 1. Combine secrets: [agreement_secret || kem_secret]
-    // 1. 合并密钥：[协商密钥 || KEM密钥]
-    let final_shared_secret = if let Some(agreement_secret) = agreement_secret {
+) -> Result<SessionKeysAndMaster> {
+    // 1. Combine secrets for this handshake: [agreement_secret || kem_secret]
+    // 1. 合并本次握手的密钥：[协商密钥 || KEM密钥]
+    let handshake_secret = if let Some(agreement_secret) = agreement_secret {
         let mut combined = agreement_secret;
         combined.extend_from_slice(kem_secret.as_ref());
         combined
@@ -54,39 +50,67 @@ pub fn derive_session_keys<S: SignaturePresence>(
         kem_secret
     };
 
+    // 2. Create the input for the KDF to derive the new master secret.
+    //    If resuming, combine the old master secret with the new handshake secret.
+    //    [resumption_master_secret || handshake_secret]
+    //
+    // 2. 创建用于派生新主密钥的 KDF 输入。
+    //    如果正在恢复会话，将旧的主密钥与新的握手密钥结合。
+    //    [恢复主密钥 || 握手密钥]
+    let master_kdf_input = if let Some(resumption_secret) = resumption_master_secret {
+        let mut combined = resumption_secret;
+        combined.extend_from_slice(&handshake_secret);
+        SharedSecret::from(combined)
+    } else {
+        handshake_secret
+    };
+
     let kdf = suite.kdf();
     let aead_algo = suite.aead().algorithm();
     let salt = Some(b"seal-handshake-salt".as_ref());
 
-    // 2. Derive client-to-server key.
-    // 2. 派生客户端到服务器的密钥。
-    let c2s_key = final_shared_secret.derive_key(
+    // 3. Derive the new master secret.
+    // 3. 派生新的主密钥。
+    let raw_master_secret = kdf.derive(
+        &master_kdf_input,
+        salt,
+        Some(b"seal-handshake-master"), // "master" context
+        32, // Assuming a 32-byte master secret length
+    )?;
+    let master_secret = SharedSecret(raw_master_secret);
+
+
+    // 4. Derive client-to-server key from the new master secret.
+    // 4. 从新的主密钥派生客户端到服务器的密钥。
+    let c2s_key = master_secret.derive_key(
         kdf.algorithm(),
         salt,
         Some(b"seal-handshake-c2s"), // "c2s" context
         aead_algo,
     )?;
 
-    // 3. Derive server-to-client key.
-    // 3. 派生服务器到客户端的密钥。
-    let s2c_key = final_shared_secret.derive_key(
+    // 5. Derive server-to-client key from the new master secret.
+    // 5. 从新的主密钥派生服务器到客户端的密钥。
+    let s2c_key = master_secret.derive_key(
         kdf.algorithm(),
         salt,
         Some(b"seal-handshake-s2c"), // "s2c" context
         aead_algo,
     )?;
 
-    // 4. Assign encryption/decryption keys based on the role (client or server).
-    // 4. 根据角色（客户端或服务器）分配加密/解密密钥。
+    // 6. Assign encryption/decryption keys based on the role.
+    // 6. 根据角色分配加密/解密密钥。
     if is_client {
-        Ok(SessionKeys {
+        Ok(SessionKeysAndMaster {
             encryption_key: c2s_key,
             decryption_key: s2c_key,
+            master_secret,
         })
     } else {
-        Ok(SessionKeys {
+        Ok(SessionKeysAndMaster {
             encryption_key: s2c_key,
             decryption_key: c2s_key,
+            master_secret,
         })
     }
 } 

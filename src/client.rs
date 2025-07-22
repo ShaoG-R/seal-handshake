@@ -13,6 +13,7 @@ use crate::protocol::{
     transcript::Transcript,
 };
 use seal_flow::common::header::AeadParamsBuilder;
+use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
     AeadAlgorithmTrait, KemAlgorithmTrait, 
@@ -74,6 +75,24 @@ pub struct HandshakeClient<State, Sig: SignaturePresence> {
     /// 用于解密（服务器到客户端）的派生密钥。
     /// 仅在 `Established` 状态下可用。
     decryption_key: Option<TypedAeadKey>,
+    /// The master secret for this session, used for session resumption.
+    ///
+    /// 当前会话的主密钥，用于会话恢复。
+    established_master_secret: Option<SharedSecret>,
+    /// The new session ticket received from the server for the next session.
+    ///
+    /// 从服务器收到的用于下一次会话的新会话票据。
+    new_session_ticket: Option<Vec<u8>>,
+
+    // --- Data for starting a new handshake with resumption ---
+    /// The master secret from a previous session, used to resume.
+    ///
+    /// 来自前一个会话的主密钥，用于恢复。
+    resumption_master_secret: Option<SharedSecret>,
+    /// The ticket from a previous session, sent to the server to resume.
+    ///
+    /// 来自前一个会话的票据，发送给服务器以进行恢复。
+    session_ticket_to_send: Option<Vec<u8>>,
 }
 
 /// A builder for creating a `HandshakeClient`.
@@ -87,6 +106,8 @@ pub struct HandshakeClient<State, Sig: SignaturePresence> {
 pub struct HandshakeClientBuilder<Sig: SignaturePresence> {
     suite: Option<ProtocolSuite<Sig>>,
     server_signature_public_key: Option<Sig::ClientKey>,
+    resumption_master_secret: Option<SharedSecret>,
+    session_ticket: Option<Vec<u8>>,
 }
 
 impl<Sig: SignaturePresence> HandshakeClientBuilder<Sig> {
@@ -95,6 +116,8 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<Sig> {
         Self {
             suite: None,
             server_signature_public_key: None,
+            resumption_master_secret: None,
+            session_ticket: None,
         }
     }
 
@@ -115,6 +138,16 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<Sig> {
     /// 这是验证服务器身份所必需的。
     pub fn server_signature_public_key(mut self, key: Sig::ClientKey) -> Self {
         self.server_signature_public_key = Some(key);
+        self
+    }
+
+    /// Provides resumption data (the master secret and the opaque ticket) from a
+    /// previous session to attempt session resumption.
+    ///
+    /// 提供来自前一个会话的恢复数据（主密钥和不透明票据）以尝试会话恢复。
+    pub fn resumption_data(mut self, master_secret: SharedSecret, ticket: Vec<u8>) -> Self {
+        self.resumption_master_secret = Some(master_secret);
+        self.session_ticket = Some(ticket);
         self
     }
 
@@ -143,6 +176,10 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<Sig> {
             server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
+            established_master_secret: None,
+            new_session_ticket: None,
+            resumption_master_secret: self.resumption_master_secret,
+            session_ticket_to_send: self.session_ticket,
         })
     }
 }
@@ -190,6 +227,7 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
 
         let client_hello = HandshakeMessage::ClientHello {
             key_agreement_public_key,
+            session_ticket: self.session_ticket_to_send.take(),
         };
 
         // Update the transcript with the ClientHello message. The transcript must begin here
@@ -207,6 +245,10 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
             server_signature_public_key: self.server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
+            established_master_secret: None,
+            new_session_ticket: None,
+            resumption_master_secret: self.resumption_master_secret.take(),
+            session_ticket_to_send: None,
         };
 
         (client_hello, next_client)
@@ -351,6 +393,7 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
         &client.suite,
         shared_secret_kem,
         shared_secret_agreement,
+        client.resumption_master_secret.take(), // Use the resumption secret
         true, // is_client = true
     )?;
 
@@ -402,6 +445,10 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
         server_signature_public_key: client.server_signature_public_key,
         encryption_key: Some(session_keys.encryption_key),
         decryption_key: Some(session_keys.decryption_key),
+        established_master_secret: Some(session_keys.master_secret),
+        new_session_ticket: None,
+        resumption_master_secret: None, // Consumed
+        session_ticket_to_send: None,   // Consumed
     };
 
     Ok((key_exchange_msg, established_client))
@@ -456,6 +503,45 @@ impl<Sig: SignaturePresence> HandshakeClient<Established, Sig> {
             .into_writer(Vec::new())?
             .encrypt_ordinary_to_vec(plaintext)
             .map_err(Into::into)
+    }
+
+    /// Processes a `NewSessionTicket` message from the server.
+    ///
+    /// The client should store this ticket alongside the master secret for future resumption.
+    ///
+    /// 处理来自服务器的 `NewSessionTicket` 消息。
+    ///
+    /// 客户端应将此票据与主密钥一起存储，以备将来恢复之用。
+    pub fn process_new_session_ticket(&mut self, message: HandshakeMessage) -> Result<()> {
+        match message {
+            HandshakeMessage::NewSessionTicket { ticket } => {
+                self.new_session_ticket = Some(ticket);
+                Ok(())
+            }
+            _ => Err(HandshakeError::InvalidMessage),
+        }
+    }
+
+    /// Returns the master secret established in this session.
+    ///
+    /// This should be stored securely by the application and used for future session resumption.
+    ///
+    /// 返回在此会话中建立的主密钥。
+    ///
+    /// 应用程序应安全地存储此密钥，并将其用于将来的会话恢复。
+    pub fn master_secret(&self) -> Option<&SharedSecret> {
+        self.established_master_secret.as_ref()
+    }
+
+    /// Returns the new session ticket received from the server, if any.
+    ///
+    /// This opaque ticket should be stored by the application and used for future session resumption.
+    ///
+    /// 返回从服务器收到的新会话票据（如果有）。
+    ///
+    /// 应用程序应存储此不透明票据，并将其用于将来的会话恢复。
+    pub fn session_ticket(&self) -> Option<&Vec<u8>> {
+        self.new_session_ticket.as_ref()
     }
 }
 

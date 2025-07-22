@@ -10,15 +10,29 @@ use seal_flow::crypto::prelude::{
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
 use serde::{Deserialize, Serialize};
+use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
+
+/// A session ticket used for resumption. It contains the master secret
+/// and an expiration timestamp, all encrypted by the server.
+///
+/// 用于会话恢复的会话票据。它包含主密钥和过期时间戳，
+/// 全部由服务器加密。
+#[derive(Serialize, Deserialize, Debug, Clone, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "bincode")]
+pub struct SessionTicket {
+    pub master_secret: SharedSecret,
+    pub expiry_timestamp: u64,
+}
 
 /// Defines the messages exchanged during the handshake protocol.
 #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
 #[bincode(crate = "bincode")]
 pub enum HandshakeMessage {
     /// Client -> Server: Initiates handshake, requesting the server's public key.
-    /// Can optionally include a KeyAgreement public key.
+    /// Can optionally include a KeyAgreement public key and a session ticket for resumption.
     ClientHello {
         key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
+        session_ticket: Option<Vec<u8>>,
     },
 
     /// Server -> Client: Provides the server's public key and supported algorithms.
@@ -41,6 +55,12 @@ pub enum HandshakeMessage {
     /// Server -> Client: An encrypted response message.
     /// The payload is a full `seal-flow` encrypted message (header + ciphertext).
     ServerFinished { encrypted_message: Vec<u8> },
+
+    /// Server -> Client: A new session ticket for the client to use in future handshakes.
+    NewSessionTicket {
+        /// The encrypted and authenticated session ticket.
+        ticket: Vec<u8>,
+    },
 }
 
 /// A custom header for `seal-flow` that includes the KEM-specific information

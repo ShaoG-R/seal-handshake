@@ -25,13 +25,15 @@ use seal_flow::{
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait,
+    AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait, KdfKeyAlgorithmTrait,
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
 use seal_flow::rand::TryRngCore;
 use std::borrow::Cow;
 use std::marker::PhantomData;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::bincode;
 
 // --- State Markers ---
 // (State markers are now imported from `crate::state`)
@@ -104,6 +106,22 @@ pub struct HandshakeServer<State, Sig: SignaturePresence> {
     /// 用于解密（客户端到服务器）的派生密钥。
     /// 在密钥交换成功后建立。
     decryption_key: Option<TypedAeadKey>,
+    /// The master secret for this session, used for creating session tickets.
+    ///
+    /// 当前会话的主密钥，用于创建会话票据。
+    master_secret: Option<SharedSecret>,
+    /// A long-term symmetric key used to encrypt session tickets.
+    /// If not set, the server will not issue tickets.
+    ///
+    /// 用于加密会话票据的长期对称密钥。
+    /// 如果未设置，服务器将不会签发票据。
+    ticket_encryption_key: Option<TypedAeadKey>,
+    /// The master secret recovered from a session ticket, if any.
+    /// This is stored temporarily during the handshake.
+    ///
+    /// 从会话票据中恢复的主密钥（如果有）。
+    /// 这在握手期间临时存储。
+    resumption_master_secret: Option<SharedSecret>,
 }
 
 /// A builder for creating a `HandshakeServer`.
@@ -117,6 +135,7 @@ pub struct HandshakeServer<State, Sig: SignaturePresence> {
 pub struct HandshakeServerBuilder<Sig: SignaturePresence> {
     suite: Option<ProtocolSuite<Sig>>,
     signature_key_pair: Option<Sig::ServerKey>,
+    ticket_encryption_key: Option<TypedAeadKey>,
 }
 
 impl<Sig: SignaturePresence> HandshakeServerBuilder<Sig> {
@@ -125,6 +144,7 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<Sig> {
         Self {
             suite: None,
             signature_key_pair: None,
+            ticket_encryption_key: None,
         }
     }
 
@@ -145,6 +165,16 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<Sig> {
     /// 这是验证服务器身份所必需的。
     pub fn signature_key_pair(mut self, key_pair: Sig::ServerKey) -> Self {
         self.signature_key_pair = Some(key_pair);
+        self
+    }
+
+    /// Sets the key for encrypting session tickets.
+    /// If not provided, the server will not be able to issue tickets for resumption.
+    ///
+    /// 设置用于加密会话票据的密钥。
+    /// 如果不提供，服务器将无法为会话恢复签发票据。
+    pub fn ticket_encryption_key(mut self, key: TypedAeadKey) -> Self {
+        self.ticket_encryption_key = Some(key);
         self
     }
 
@@ -173,6 +203,9 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<Sig> {
             agreement_shared_secret: None,
             encryption_key: None,
             decryption_key: None,
+            master_secret: None,
+            ticket_encryption_key: self.ticket_encryption_key,
+            resumption_master_secret: None,
         })
     }
 }
@@ -203,12 +236,19 @@ impl HandshakeServer<Ready, WithSignature> {
     ) -> Result<(HandshakeMessage, HandshakeServer<AwaitingKeyExchange, WithSignature>)> {
         self.transcript.update(&message);
 
-        let client_key_agreement_pk = match message {
-            HandshakeMessage::ClientHello {
-                key_agreement_public_key,
-            } => key_agreement_public_key,
-            _ => return Err(HandshakeError::InvalidMessage),
-        };
+        let (client_key_agreement_pk, resumption_master_secret) =
+            match message {
+                HandshakeMessage::ClientHello {
+                    key_agreement_public_key,
+                    session_ticket,
+                } => (
+                    key_agreement_public_key,
+                    self.try_decode_ticket(session_ticket)?,
+                ),
+                _ => return Err(HandshakeError::InvalidMessage),
+            };
+        
+        self.resumption_master_secret = resumption_master_secret;
 
         // KEM key generation
         let kem = self.suite.kem();
@@ -259,6 +299,9 @@ impl HandshakeServer<Ready, WithSignature> {
             agreement_shared_secret,
             encryption_key: None,
             decryption_key: None,
+            master_secret: None,
+            ticket_encryption_key: self.ticket_encryption_key,
+            resumption_master_secret: self.resumption_master_secret,
         };
 
         Ok((server_hello, next_server))
@@ -282,12 +325,19 @@ impl HandshakeServer<Ready, WithoutSignature> {
     )> {
         self.transcript.update(&message);
 
-        let client_key_agreement_pk = match message {
-            HandshakeMessage::ClientHello {
-                key_agreement_public_key,
-            } => key_agreement_public_key,
-            _ => return Err(HandshakeError::InvalidMessage),
-        };
+        let (client_key_agreement_pk, resumption_master_secret) =
+            match message {
+                HandshakeMessage::ClientHello {
+                    key_agreement_public_key,
+                    session_ticket,
+                } => (
+                    key_agreement_public_key,
+                    self.try_decode_ticket(session_ticket)?,
+                ),
+                _ => return Err(HandshakeError::InvalidMessage),
+            };
+        
+        self.resumption_master_secret = resumption_master_secret;
 
         // KEM key generation
         let kem = self.suite.kem();
@@ -329,6 +379,9 @@ impl HandshakeServer<Ready, WithoutSignature> {
             agreement_shared_secret,
             encryption_key: None,
             decryption_key: None,
+            master_secret: None,
+            ticket_encryption_key: self.ticket_encryption_key,
+            resumption_master_secret: self.resumption_master_secret,
         };
 
         Ok((server_hello, next_server))
@@ -413,6 +466,7 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
             &self.suite,
             shared_secret,
             self.agreement_shared_secret.take(),
+            self.resumption_master_secret.take(),
             false, // is_client = false
         )?;
 
@@ -439,13 +493,129 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
             agreement_shared_secret: None, // Consumed and discarded
             encryption_key: Some(session_keys.encryption_key),
             decryption_key: Some(session_keys.decryption_key),
+            master_secret: Some(session_keys.master_secret),
+            ticket_encryption_key: self.ticket_encryption_key,
+            resumption_master_secret: None,
         };
 
         Ok((initial_payload, established_server))
     }
 }
 
+impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
+    /// Attempts to decrypt and validate a session ticket.
+    ///
+    /// Returns the master secret if the ticket is valid, otherwise returns `None`.
+    ///
+    /// 尝试解密并验证会话票据。
+    ///
+    /// 如果票据有效，则返回主密钥，否则返回 `None`。
+    fn try_decode_ticket(
+        &self,
+        encrypted_ticket: Option<Vec<u8>>,
+    ) -> Result<Option<SharedSecret>> {
+        let (tek, encrypted_ticket) =
+            match (self.ticket_encryption_key.as_ref(), encrypted_ticket) {
+                (Some(tek), Some(ticket)) => (tek, ticket),
+                // If no key or no ticket, we can't resume.
+                _ => return Ok(None),
+            };
+
+        // Decrypt the ticket.
+        let pending_decryption =
+            prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_ticket, None)?;
+
+        let serialized_ticket = pending_decryption.decrypt_ordinary(Cow::Borrowed(tek), None)?;
+
+        // Deserialize and validate the ticket.
+        let ticket: crate::protocol::message::SessionTicket =
+            bincode::decode_from_slice(&serialized_ticket, bincode::config::standard())?.0;
+
+        // Check for expiry.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| HandshakeError::InvalidState)?
+            .as_secs();
+
+        if ticket.expiry_timestamp <= now {
+            // Ticket has expired.
+            return Ok(None);
+        }
+
+        Ok(Some(ticket.master_secret))
+    }
+}
+
+
 // --- `encrypt` and `decrypt` implementations ---
+
+impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
+    /// Issues a new session ticket for the client to use for resumption.
+    ///
+    /// This method can only be called after the handshake is established. It encrypts
+    /// the session's master secret with a long-term ticket encryption key.
+    ///
+    /// 为客户端签发一个新的会话票据，用于会话恢复。
+    ///
+    /// 此方法只能在握手建立后调用。它使用一个长期的票据加密密钥
+    /// 来加密会话的主密钥。
+    pub fn issue_session_ticket(&self) -> Result<HandshakeMessage> {
+        let tek = self
+            .ticket_encryption_key
+            .as_ref()
+            .ok_or(HandshakeError::InvalidState)?;
+        let master_secret = self
+            .master_secret
+            .as_ref()
+            .ok_or(HandshakeError::InvalidState)?;
+
+        // Create the ticket with a 1-hour expiry.
+        let expiry = SystemTime::now()
+            .checked_add(Duration::from_secs(3600))
+            .ok_or(HandshakeError::InvalidState)?
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| HandshakeError::InvalidState)?
+            .as_secs();
+
+        let ticket_data = crate::protocol::message::SessionTicket {
+            master_secret: master_secret.clone(),
+            expiry_timestamp: expiry,
+        };
+
+        let serialized_ticket = bincode::encode_to_vec(ticket_data, bincode::config::standard())?;
+
+        // Encrypt the ticket using the server's TEK.
+        // We use the AEAD algorithm from the current suite for consistency.
+        let aead = self.suite.aead();
+        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+            .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
+            .build();
+
+        let header = EncryptedHeader {
+                params,
+                // These fields are not relevant for ticket encryption but are part of the struct.
+            kem_algorithm: self.suite.kem().algorithm(),
+            kdf_params: KdfParams {
+                algorithm: self.suite.kdf().algorithm(),
+                salt: None,
+                info: None,
+            },
+            signature_algorithm: None,
+            signed_transcript_hash: None,
+            transcript_signature: None,
+        };
+
+        // Note: The AAD is empty here as there's no additional data to authenticate.
+        let encrypted_ticket =
+            EncryptionConfigurator::new(header, Cow::Borrowed(tek), None)
+                .into_writer(Vec::new())?
+                .encrypt_ordinary_to_vec(&serialized_ticket)?;
+
+        Ok(HandshakeMessage::NewSessionTicket {
+            ticket: encrypted_ticket,
+        })
+    }
+}
 
 impl HandshakeServer<Established, WithSignature> {
     /// Encrypts data and signs the transcript when a signature scheme is configured.
