@@ -4,11 +4,11 @@
 use crate::error::{HandshakeError, Result};
 use crate::keys::derive_session_keys;
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
-use crate::suite::{KeyAgreementEngine, ProtocolSuite};
+use crate::signature::sign_ephemeral_keys;
 use crate::state::{AwaitingKeyExchange, Established, Ready};
+use crate::suite::{KeyAgreementEngine, ProtocolSuite};
 use crate::transcript::Transcript;
 use seal_flow::common::header::AeadParamsBuilder;
-use seal_flow::crypto::bincode;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
@@ -141,24 +141,12 @@ impl HandshakeServer<Ready> {
 
                 // Sign the ephemeral public keys with the long-term identity key.
                 let signature = if let Some(signer) = self.suite.signature() {
-                    let data_to_sign = {
-                        let kem_pk_bytes =
-                            bincode::encode_to_vec(&kem_public_key, bincode::config::standard())
-                                .map_err(HandshakeError::from)?;
-                        if let Some(key_agreement_pk) = &server_key_agreement_pk {
-                            let mut combined = kem_pk_bytes;
-                            let key_agreement_pk_bytes = bincode::encode_to_vec(
-                                key_agreement_pk,
-                                bincode::config::standard(),
-                            )
-                            .map_err(HandshakeError::from)?;
-                            combined.extend_from_slice(&key_agreement_pk_bytes);
-                            combined
-                        } else {
-                            kem_pk_bytes
-                        }
-                    };
-                    Some(signer.sign(&data_to_sign, &self.signature_key_pair.private_key())?)
+                    Some(sign_ephemeral_keys(
+                        signer,
+                        &kem_public_key,
+                        &server_key_agreement_pk,
+                        &self.signature_key_pair.private_key(),
+                    )?)
                 } else {
                     None
                 };

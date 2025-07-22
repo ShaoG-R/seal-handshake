@@ -4,14 +4,14 @@
 use crate::error::{HandshakeError, Result};
 use crate::keys::derive_session_keys;
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
+use crate::signature::verify_ephemeral_keys;
 use crate::state::{AwaitingKemPublicKey, Established, Ready};
 use crate::suite::{KeyAgreementEngine, ProtocolSuite};
 use crate::transcript::Transcript;
 use seal_flow::common::header::AeadParamsBuilder;
-use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait,
+    AeadAlgorithmTrait, KemAlgorithmTrait, 
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
@@ -168,31 +168,13 @@ impl HandshakeClient<AwaitingKemPublicKey> {
 
         // Verify the signature of the ephemeral keys, if provided.
         if let (Some(signature), Some(verifier)) = (signature, self.suite.signature()) {
-            let data_to_verify = {
-                let kem_pk_bytes =
-                    bincode::encode_to_vec(&server_kem_pk, bincode::config::standard())
-                        .map_err(HandshakeError::from)?;
-                if let Some(key_agreement_pk) = &server_key_agreement_pk {
-                    let mut combined = kem_pk_bytes;
-                    let key_agreement_pk_bytes = bincode::encode_to_vec(
-                        key_agreement_pk,
-                        bincode::config::standard(),
-                    )
-                    .map_err(HandshakeError::from)?;
-                    combined.extend_from_slice(&key_agreement_pk_bytes);
-                    combined
-                } else {
-                    kem_pk_bytes
-                }
-            };
-
-            verifier
-                .verify(
-                    &data_to_verify,
-                    &self.server_signature_public_key,
-                    &signature,
-                )
-                .map_err(|_| HandshakeError::InvalidSignature)?;
+            verify_ephemeral_keys(
+                verifier,
+                &server_kem_pk,
+                &server_key_agreement_pk,
+                &signature,
+                &self.server_signature_public_key,
+            )?;
         }
 
         // --- Key Derivation ---
