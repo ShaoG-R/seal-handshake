@@ -6,8 +6,7 @@ use seal_flow::crypto::wrappers::{
     symmetric::SymmetricAlgorithmWrapper,
 };
 
-
-// 伪代码：定义协议所需的加密组件
+// --- Final ProtocolSuite ---
 #[derive(Debug, Clone)]
 pub struct ProtocolSuite {
     kem: KemAlgorithmWrapper,
@@ -17,57 +16,12 @@ pub struct ProtocolSuite {
     kdf: KdfKeyWrapper,
 }
 
-#[derive(Debug, Default)]
-pub struct ProtocolSuiteBuilder {
-    kem: Option<KemAlgorithmWrapper>,
-    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    signature: Option<SignatureAlgorithmWrapper>,
-    aead: Option<SymmetricAlgorithmWrapper>,
-    kdf: Option<KdfKeyWrapper>,
-}
-
-impl ProtocolSuiteBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn with_kem(mut self, kem: KemAlgorithmWrapper) -> Self {
-        self.kem = Some(kem);
-        self
-    }
-
-    pub fn with_key_agreement(mut self, ka: KeyAgreementAlgorithmWrapper) -> Self {
-        self.key_agreement = Some(ka);
-        self
-    }
-
-    pub fn with_signature(mut self, signature: SignatureAlgorithmWrapper) -> Self {
-        self.signature = Some(signature);
-        self
-    }
-
-    pub fn with_aead(mut self, aead: SymmetricAlgorithmWrapper) -> Self {
-        self.aead = Some(aead);
-        self
-    }
-
-    pub fn with_kdf(mut self, kdf: KdfKeyWrapper) -> Self {
-        self.kdf = Some(kdf);
-        self
-    }
-
-    pub fn build(self) -> ProtocolSuite {
-        ProtocolSuite {
-            kem: self.kem.expect("KEM algorithm must be set"),
-            key_agreement: self.key_agreement,
-            signature: self.signature,
-            aead: self.aead.expect("AEAD algorithm must be set"),
-            kdf: self.kdf.expect("KDF algorithm must be set"),
-        }
-    }
-}
-
 impl ProtocolSuite {
+    /// Starts building a new ProtocolSuite.
+    pub fn builder() -> ProtocolSuiteBuilder {
+        ProtocolSuiteBuilder
+    }
+
     pub fn kem(&self) -> &KemAlgorithmWrapper {
         &self.kem
     }
@@ -86,5 +40,88 @@ impl ProtocolSuite {
 
     pub fn kdf(&self) -> &KdfKeyWrapper {
         &self.kdf
+    }
+}
+
+// --- Typestate Builder using Concrete Structs ---
+
+/// The entry point for the builder.
+pub struct ProtocolSuiteBuilder;
+
+impl ProtocolSuiteBuilder {
+    /// Sets the core asymmetric algorithms and moves to the next state.
+    pub fn with_algorithms(
+        self,
+        kem: KemAlgorithmWrapper,
+        signature: Option<SignatureAlgorithmWrapper>,
+        key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    ) -> BuilderWithAlgorithms {
+        BuilderWithAlgorithms {
+            kem,
+            signature,
+            key_agreement,
+        }
+    }
+}
+
+/// State after asymmetric algorithms are set. Requires AEAD.
+pub struct BuilderWithAlgorithms {
+    kem: KemAlgorithmWrapper,
+    signature: Option<SignatureAlgorithmWrapper>,
+    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+}
+
+impl BuilderWithAlgorithms {
+    /// Sets the AEAD algorithm and moves to the next state.
+    pub fn with_aead(self, aead: SymmetricAlgorithmWrapper) -> BuilderWithAead {
+        BuilderWithAead {
+            kem: self.kem,
+            signature: self.signature,
+            key_agreement: self.key_agreement,
+            aead,
+        }
+    }
+}
+
+/// State after AEAD is set. Requires KDF.
+pub struct BuilderWithAead {
+    kem: KemAlgorithmWrapper,
+    signature: Option<SignatureAlgorithmWrapper>,
+    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    aead: SymmetricAlgorithmWrapper,
+}
+
+impl BuilderWithAead {
+    /// Sets the KDF algorithm and moves to the final, buildable state.
+    pub fn with_kdf(self, kdf: KdfKeyWrapper) -> ReadyToBuild {
+        ReadyToBuild {
+            kem: self.kem,
+            signature: self.signature,
+            key_agreement: self.key_agreement,
+            aead: self.aead,
+            kdf,
+        }
+    }
+}
+
+/// The final state where the builder can construct a `ProtocolSuite`.
+pub struct ReadyToBuild {
+    kem: KemAlgorithmWrapper,
+    signature: Option<SignatureAlgorithmWrapper>,
+    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    aead: SymmetricAlgorithmWrapper,
+    kdf: KdfKeyWrapper,
+}
+
+impl ReadyToBuild {
+    /// Builds the `ProtocolSuite`.
+    pub fn build(self) -> ProtocolSuite {
+        ProtocolSuite {
+            kem: self.kem,
+            key_agreement: self.key_agreement,
+            signature: self.signature,
+            aead: self.aead,
+            kdf: self.kdf,
+        }
     }
 }

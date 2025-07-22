@@ -4,7 +4,7 @@
 use seal_handshake::client::HandshakeClient;
 use seal_handshake::error::Result;
 use seal_handshake::server::HandshakeServer;
-use seal_handshake::suite::ProtocolSuiteBuilder;
+use seal_handshake::suite::ProtocolSuite;
 use seal_flow::crypto::algorithms::{
     asymmetric::{kem::KemAlgorithm, signature::SignatureAlgorithm},
     kdf::key::KdfKeyAlgorithm,
@@ -31,11 +31,14 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     // --- 2. Protocol Suite Initialization ---
     println!("--- Initializing protocol suite ---");
 
-    let suite = ProtocolSuiteBuilder::new()
-        .with_kem(kem.into_asymmetric_wrapper())
+    let suite = ProtocolSuite::builder()
+        .with_algorithms(
+            kem.into_asymmetric_wrapper(),
+            Some(signature_algorithm.into_signature_wrapper()),
+            None,
+        )
         .with_aead(aead.into_symmetric_wrapper())
         .with_kdf(kdf.into_kdf_key_wrapper())
-        .with_signature(signature_algorithm.into_signature_wrapper())
         .build();
 
     // --- 3. Server and Client Initialization ---
