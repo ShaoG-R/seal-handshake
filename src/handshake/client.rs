@@ -12,6 +12,7 @@ use crate::protocol::{
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use std::marker::PhantomData;
+use builder::Missing;
 
 mod builder;
 mod state_ready;

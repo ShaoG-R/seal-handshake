@@ -12,6 +12,7 @@ mod state_ready;
 mod state_awaiting_key_exchange;
 mod state_established;
 
+use builder::Missing;
 pub use builder::HandshakeServerBuilder;
 use seal_flow::crypto::{keys::asymmetric::kem::SharedSecret, prelude::{TypedAeadKey, TypedKemKeyPair}};
 

@@ -1,5 +1,4 @@
-
-use super::{AwaitingKemPublicKey, HandshakeClient, HandshakeClientBuilder, KeyAgreementEngine, Ready, SignaturePresence};
+use super::{AwaitingKemPublicKey, HandshakeClient, HandshakeClientBuilder, KeyAgreementEngine, Missing, Ready, SignaturePresence};
 use crate::protocol::message::HandshakeMessage;
 use std::marker::PhantomData;
 
@@ -8,7 +7,7 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
     /// Creates a new `HandshakeClientBuilder` to construct a `HandshakeClient`.
     ///
     /// 在 `Ready` 状态下创建一个新的 `HandshakeClient` 的构建器。
-    pub fn builder() -> HandshakeClientBuilder<Sig> {
+    pub fn builder() -> HandshakeClientBuilder<Missing, Missing, Sig> {
         HandshakeClientBuilder::new()
     }
 }

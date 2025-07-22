@@ -1,5 +1,5 @@
 
-use super::{AwaitingKeyExchange, HandshakeServer, HandshakeServerBuilder, KeyAgreementEngine, Ready, SignaturePresence};
+use super::{AwaitingKeyExchange, HandshakeServer, HandshakeServerBuilder, KeyAgreementEngine, Ready, SignaturePresence, Missing};
 use crate::crypto::{signature::sign_ephemeral_keys, suite::{WithSignature, WithoutSignature}};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{HandshakeMessage, SessionTicket};
@@ -18,7 +18,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
     /// Creates a new `HandshakeServerBuilder` to construct a `HandshakeServer`.
     ///
     /// 在 `Ready` 状态下创建一个新的 `HandshakeServer` 的构建器。
-    pub fn builder() -> HandshakeServerBuilder<Sig> {
+    pub fn builder() -> HandshakeServerBuilder<Missing, Missing, Sig> {
         HandshakeServerBuilder::new()
     }
 }
