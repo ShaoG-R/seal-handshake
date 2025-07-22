@@ -3,7 +3,7 @@
 
 use crate::error::{HandshakeError, Result};
 use crate::crypto::{
-    keys::derive_session_keys,
+    keys::{derive_session_keys, SessionKeysAndMaster},
     signature::verify_ephemeral_keys,
     suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature, WithoutSignature},
 };
@@ -374,65 +374,21 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
     aad: Option<&[u8]>,
 ) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig>)> {
     // --- Key Derivation ---
-    let kem = kem_algorithm;
-
-    // KEM: Encapsulate a new shared secret against the server's public KEM key.
-    let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
-
-    // Key Agreement: If negotiated, compute the shared secret.
-    let shared_secret_agreement = if let (Some(engine), Some(server_pk)) =
-        (client.key_agreement_engine.as_ref(), &server_key_agreement_pk)
-    {
-        Some(engine.agree(server_pk)?)
-    } else {
-        None
-    };
-
-    // KDF: Derive session keys.
-    let session_keys = derive_session_keys(
-        &client.suite,
-        shared_secret_kem,
-        shared_secret_agreement,
-        client.resumption_master_secret.take(), // Use the resumption secret
-        true, // is_client = true
+    let (session_keys, encapsulated_key) = derive_session_keys_from_server_hello(
+        &client,
+        server_kem_pk,
+        kem_algorithm,
+        server_key_agreement_pk,
     )?;
 
-    // DEM: Encrypt the initial payload.
-    let aad = aad.unwrap_or(b"seal-handshake-aad");
-    let aead = client.suite.aead();
-    let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
-        .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
-        .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
-        .build();
-
-    let kdf_params = KdfParams {
-        algorithm: client.suite.kdf().algorithm(),
-        salt: Some(b"seal-handshake-salt".to_vec()),
-        info: Some(b"seal-handshake-c2s".to_vec()),
-    };
-
-    let header = EncryptedHeader {
-        params,
-        kem_algorithm: kem.algorithm(),
-        kdf_params,
-        signature_algorithm: None,
-        signed_transcript_hash: None,
-        transcript_signature: None,
-    };
-
-    let encrypted_message = EncryptionConfigurator::new(
-        header,
-        Cow::Borrowed(&session_keys.encryption_key),
-        Some(aad.to_vec()),
-    )
-    .into_writer(Vec::new())?
-    .encrypt_ordinary_to_vec(initial_payload.unwrap_or(&[]))?;
-
-    // Create the `ClientKeyExchange` message.
-    let key_exchange_msg = HandshakeMessage::ClientKeyExchange {
-        encrypted_message,
+    // --- Create ClientKeyExchange ---
+    let key_exchange_msg = create_client_key_exchange(
+        &client,
+        &session_keys.encryption_key,
         encapsulated_key,
-    };
+        initial_payload,
+        aad,
+    )?;
 
     client.transcript.update(&key_exchange_msg);
 
@@ -452,6 +408,84 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
     };
 
     Ok((key_exchange_msg, established_client))
+}
+
+/// Derives session keys based on the server's hello message and the client's state.
+fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
+    client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
+    server_kem_pk: TypedKemPublicKey,
+    kem_algorithm: KemAlgorithmWrapper,
+    server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
+) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
+    let kem = kem_algorithm;
+
+    // KEM: Encapsulate a new shared secret against the server's public KEM key.
+    let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
+
+    // Key Agreement: If negotiated, compute the shared secret.
+    let shared_secret_agreement = if let (Some(engine), Some(server_pk)) =
+        (client.key_agreement_engine.as_ref(), &server_key_agreement_pk)
+    {
+        Some(engine.agree(server_pk)?)
+    } else {
+        None
+    };
+
+    // KDF: Derive session keys.
+    let session_keys = derive_session_keys(
+        &client.suite,
+        shared_secret_kem,
+        shared_secret_agreement,
+        client.resumption_master_secret.clone(), // Use the resumption secret
+        true, // is_client = true
+    )?;
+
+    Ok((session_keys, encapsulated_key))
+}
+
+/// Creates the `ClientKeyExchange` message, encrypting the initial payload.
+fn create_client_key_exchange<Sig: SignaturePresence>(
+    client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
+    encryption_key: &TypedAeadKey,
+    encapsulated_key: EncapsulatedKey,
+    initial_payload: Option<&[u8]>,
+    aad: Option<&[u8]>,
+) -> Result<HandshakeMessage> {
+    let aad = aad.unwrap_or(b"seal-handshake-aad");
+    let aead = client.suite.aead();
+    let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+        .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
+        .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
+        .build();
+
+    let kdf_params = KdfParams {
+        algorithm: client.suite.kdf().algorithm(),
+        salt: Some(b"seal-handshake-salt".to_vec()),
+        info: Some(b"seal-handshake-c2s".to_vec()),
+    };
+
+    let header = EncryptedHeader {
+        params,
+        kem_algorithm: client.suite.kem().algorithm(),
+        kdf_params,
+        signature_algorithm: None,
+        signed_transcript_hash: None,
+        transcript_signature: None,
+    };
+
+    let encrypted_message = EncryptionConfigurator::new(
+        header,
+        Cow::Borrowed(encryption_key),
+        Some(aad.to_vec()),
+    )
+    .into_writer(Vec::new())?
+    .encrypt_ordinary_to_vec(initial_payload.unwrap_or(&[]))?;
+
+    // Create the `ClientKeyExchange` message.
+    Ok(HandshakeMessage::ClientKeyExchange {
+        encrypted_message,
+        encapsulated_key,
+    })
 }
 
 impl<Sig: SignaturePresence> HandshakeClient<Established, Sig> {

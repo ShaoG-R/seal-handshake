@@ -1,9 +1,9 @@
 //! Integration test for the complete handshake protocol.
 //! 对完整握手协议的集成测试。
 
-use seal_handshake::client::HandshakeClient;
+use seal_handshake::handshake::client::HandshakeClient;
 use seal_handshake::error::Result;
-use seal_handshake::server::HandshakeServer;
+use seal_handshake::handshake::server::HandshakeServer;
 use seal_handshake::crypto::suite::ProtocolSuiteBuilder;
 use seal_flow::crypto::algorithms::{
     asymmetric::{kem::KemAlgorithm, signature::SignatureAlgorithm},
@@ -76,7 +76,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
         String::from_utf8_lossy(&decrypted_payload)
     );
 
-    assert_eq!(initial_payload, decrypted_payload.as_slice());
+    assert_eq!(initial_payload, &decrypted_payload[..]);
     println!("--- Handshake successful, session established ---");
 
     // --- 5. Post-Handshake Data Exchange ---
@@ -93,7 +93,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
         "S: Decrypted message: '{}'",
         String::from_utf8_lossy(&decrypted_client_message)
     );
-    assert_eq!(client_message, decrypted_client_message.as_slice());
+    assert_eq!(client_message, &decrypted_client_message[..]);
 
     // S -> C: Encrypt and send application data
     let server_message = b"a response from the server";
@@ -109,7 +109,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
         "C: Decrypted response: '{}'",
         String::from_utf8_lossy(&decrypted_server_message)
     );
-    assert_eq!(server_message, decrypted_server_message.as_slice());
+    assert_eq!(server_message, &decrypted_server_message[..]);
 
     println!("--- Data exchange successful ---");
 
@@ -173,7 +173,7 @@ fn test_kem_only_handshake() -> Result<()> {
         String::from_utf8_lossy(&decrypted_payload)
     );
 
-    assert_eq!(initial_payload, decrypted_payload.as_slice());
+    assert_eq!(initial_payload, &decrypted_payload[..]);
     println!("--- KEM-only handshake successful, session established ---");
 
     // --- 5. Post-Handshake Data Exchange ---
@@ -190,7 +190,7 @@ fn test_kem_only_handshake() -> Result<()> {
         "S: Decrypted message: '{}'",
         String::from_utf8_lossy(&decrypted_client_message)
     );
-    assert_eq!(client_message, decrypted_client_message.as_slice());
+    assert_eq!(client_message, &decrypted_client_message[..]);
 
     // S -> C: Encrypt and send application data
     let server_message = b"a response from the server";
@@ -206,7 +206,7 @@ fn test_kem_only_handshake() -> Result<()> {
         "C: Decrypted response: '{}'",
         String::from_utf8_lossy(&decrypted_server_message)
     );
-    assert_eq!(server_message, decrypted_server_message.as_slice());
+    assert_eq!(server_message, &decrypted_server_message[..]);
 
     println!("--- KEM-only data exchange successful ---");
 
@@ -294,7 +294,7 @@ fn test_handshake_with_resumption() -> Result<()> {
     let client_message = b"Final test message from client";
     let encrypted = resumption_client.encrypt(client_message, aad)?;
     let decrypted = resumption_server.decrypt(&encrypted, aad)?;
-    assert_eq!(client_message, decrypted.as_slice());
+    assert_eq!(client_message, &decrypted[..]);
 
     println!("--- Data exchange after resumption successful ---");
 

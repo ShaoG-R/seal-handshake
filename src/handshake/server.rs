@@ -9,7 +9,7 @@ use crate::protocol::{
 };
 use crate::error::{HandshakeError, Result};
 use crate::crypto::{
-    keys::derive_session_keys,
+    keys::{derive_session_keys, SessionKeysAndMaster},
     signature::sign_ephemeral_keys,
     suite::{
         KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature, WithoutSignature,
@@ -20,7 +20,7 @@ use seal_flow::{
     crypto::{
         algorithms::asymmetric::signature::SignatureAlgorithm,
         wrappers::asymmetric::signature::SignatureWrapper,
-    },
+    }, prelude::PendingDecryption,
 };
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
@@ -411,86 +411,40 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
         message: HandshakeMessage,
         aad: &[u8],
     ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig>)> {
-        // Update transcript with the client's key exchange message.
-        // 使用客户端的密钥交换消息更新握手记录。
         self.transcript.update(&message);
 
-        // Extract the encrypted message and encapsulated key from the client's message.
-        // 从客户端消息中提取加密消息和封装的密钥。
-        let (encrypted_message, encapsulated_key) = match message {
-            HandshakeMessage::ClientKeyExchange {
-                encrypted_message,
-                encapsulated_key,
-            } => (encrypted_message, encapsulated_key),
-            _ => return Err(HandshakeError::InvalidMessage),
-        };
+        let (encrypted_message, encapsulated_key) =
+            extract_client_key_exchange(&message)?;
 
-        // The KEM key pair must exist in this state. `take()` consumes it, ensuring it's used only once.
-        // This is a critical security property to prevent reuse of ephemeral keys.
-        //
-        // 在此状态下，KEM 密钥对必须存在。`take()` 会消耗它，确保它只被使用一次。
-        // 这是防止临时密钥重用的关键安全属性。
         let kem_key_pair = self
             .kem_key_pair
             .take()
             .ok_or(HandshakeError::InvalidState)?;
 
-        // Parse the header from the encrypted message to get KDF/AEAD parameters.
-        // The client does not send a transcript signature in this message, so `verify_key` is `None`.
-        // The header is authenticated as part of the AEAD tag.
-        //
-        // 从加密消息中解析头部以获取 KDF/AEAD 参数。
-        // 客户端在此消息中不发送握手记录签名，因此 `verify_key` 为 `None`。
-        // 头部作为 AEAD 标签的一部分进行认证。
         let pending_decryption =
             prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message, None)?;
-        let header = pending_decryption.header().clone();
 
-        // KEM: Decapsulate the shared secret using the server's private KEM key and the
-        // encapsulated key from the client. This recovers the secret only the client could have generated.
-        //
-        // KEM：使用服务器的私有 KEM 密钥和来自客户端的封装密钥来解封装共享密钥。
-        // 这恢复了只有客户端才能生成的密钥。
-        let kem = header.kem_algorithm.into_wrapper();
-        let shared_secret =
-            kem.decapsulate_key(&kem_key_pair.private_key(), &encapsulated_key)?;
-
-        // KDF: Derive session keys from the shared secrets (KEM and optional key agreement).
-        // The `is_client` flag is false, ensuring the server derives the correct set of keys
-        // (server_write_key, client_write_key).
-        //
-        // KDF：从共享密钥（KEM 和可选的密钥协商）派生会话密钥。
-        // `is_client` 标志为 false，确保服务器派生正确的密钥集
-        // (server_write_key, client_write_key)。
-        let session_keys = derive_session_keys(
-            &self.suite,
-            shared_secret,
-            self.agreement_shared_secret.take(),
-            self.resumption_master_secret.take(),
-            false, // is_client = false
+        let session_keys = derive_session_keys_from_client_exchange(
+            &self,
+            &kem_key_pair,
+            &encapsulated_key,
+            pending_decryption.header(),
         )?;
 
-        // DEM: Decrypt the initial payload sent by the client using the newly derived decryption key.
-        // This verifies that the client has successfully derived the same keys.
-        //
-        // DEM：使用新派生的解密密钥解密客户端发送的初始负载。
-        // 这验证了客户端已成功派生出相同的密钥。
-        let initial_payload = pending_decryption
-            .decrypt_ordinary(Cow::Borrowed(&session_keys.decryption_key), Some(aad.to_vec()))?;
+        let initial_payload = decrypt_initial_payload(
+            pending_decryption,
+            &session_keys.decryption_key,
+            aad,
+        )?;
 
-        // Transition to the `Established` state with the derived session keys.
-        // The ephemeral keys (KEM pair, agreement secret) have been consumed and are now gone.
-        //
-        // 使用派生的会话密钥转换到 `Established` 状态。
-        // 临时密钥（KEM 密钥对、协商密钥）已被消耗且不复存在。
         let established_server = HandshakeServer {
             state: PhantomData,
             suite: self.suite,
             transcript: self.transcript,
             signature_key_pair: self.signature_key_pair,
-            kem_key_pair: None, // Consumed and discarded
+            kem_key_pair: None,
             key_agreement_engine: self.key_agreement_engine,
-            agreement_shared_secret: None, // Consumed and discarded
+            agreement_shared_secret: None,
             encryption_key: Some(session_keys.encryption_key),
             decryption_key: Some(session_keys.decryption_key),
             master_secret: Some(session_keys.master_secret),
@@ -500,6 +454,50 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
 
         Ok((initial_payload, established_server))
     }
+}
+
+/// Extracts the contents of a `ClientKeyExchange` message.
+fn extract_client_key_exchange(
+    message: &HandshakeMessage,
+) -> Result<(Vec<u8>, EncapsulatedKey)> {
+    match message {
+        HandshakeMessage::ClientKeyExchange {
+            encrypted_message,
+            encapsulated_key,
+        } => Ok((encrypted_message.clone(), encapsulated_key.clone())),
+        _ => Err(HandshakeError::InvalidMessage),
+    }
+}
+
+/// Derives session keys from the client's key exchange data.
+fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
+    server: &HandshakeServer<AwaitingKeyExchange, Sig>,
+    kem_key_pair: &TypedKemKeyPair,
+    encapsulated_key: &EncapsulatedKey,
+    header: &EncryptedHeader,
+) -> Result<SessionKeysAndMaster> {
+    let kem = header.kem_algorithm.into_wrapper();
+    let shared_secret =
+        kem.decapsulate_key(&kem_key_pair.private_key(), encapsulated_key)?;
+
+    derive_session_keys(
+        &server.suite,
+        shared_secret,
+        server.agreement_shared_secret.clone(),
+        server.resumption_master_secret.clone(),
+        false, // is_client = false
+    )
+}
+
+/// Decrypts the initial payload from the client.
+fn decrypt_initial_payload(
+    pending_decryption: PendingDecryption<&[u8], EncryptedHeader>,
+    decryption_key: &TypedAeadKey,
+    aad: &[u8],
+) -> Result<Vec<u8>> {
+    pending_decryption
+        .decrypt_ordinary(Cow::Borrowed(decryption_key), Some(aad.to_vec()))
+        .map_err(Into::into)
 }
 
 impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
