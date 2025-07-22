@@ -1,8 +1,10 @@
 use crate::bincode;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams};
 use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
+use seal_flow::crypto::algorithms::asymmetric::signature::SignatureAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
-use seal_flow::crypto::prelude::{EncapsulatedKey, TypedKemPublicKey};
+use seal_flow::crypto::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSignaturePublicKey, TypedAsymmetricKeyTrait};
+use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +45,14 @@ pub struct EncryptedHeader {
     pub params: SymmetricParams,
     pub kem_algorithm: KemAlgorithm,
     pub kdf_params: KdfParams,
+
+    // --- New fields for handshake integrity ---
+    /// The algorithm used for the transcript signature.
+    pub signature_algorithm: Option<SignatureAlgorithm>,
+    /// The signed hash of the handshake transcript.
+    pub signed_transcript_hash: Option<Vec<u8>>,
+    /// The signature of the handshake transcript.
+    pub transcript_signature: Option<SignatureWrapper>,
 }
 
 impl SealFlowHeader for EncryptedHeader {
@@ -52,6 +62,37 @@ impl SealFlowHeader for EncryptedHeader {
 
     fn extra_data(&self) -> Option<&[u8]> {
         None
+    }
+
+    /// Verifies the handshake transcript signature within the header.
+    ///
+    /// This check is performed automatically during decryption if a `verify_key` is provided.
+    /// It ensures the integrity of the entire handshake process.
+    fn verify_signature<'a>(&self, verify_key: Option<&'a TypedSignaturePublicKey>) -> seal_flow::Result<()> {
+        match (
+            &self.transcript_signature,
+            &self.signed_transcript_hash,
+            &self.signature_algorithm,
+            verify_key,
+        ) {
+            // Case 1: All required parts for verification are present.
+            (Some(signature), Some(hash), Some(sig_algo), Some(public_key)) => {
+                // Ensure the algorithm specified in the header matches the one in the provided key.
+                if sig_algo != &public_key.algorithm() {
+                    return Err(seal_flow::Error::Format(seal_flow::error::FormatError::InvalidAlgorithm));
+                }
+
+                let verifier = sig_algo.into_signature_wrapper();
+                verifier
+                    .verify(hash, public_key, signature)
+                    .map_err(|_| seal_flow::Error::Format(seal_flow::error::FormatError::InvalidSignature))
+            }
+            // Case 2: No signature was provided in the header. This is valid; we do nothing.
+            (None, None, None, _) => Ok(()),
+            // Case 3: The header is malformed (e.g., signature present but hash or algo missing).
+            // This indicates a protocol violation or a bug.
+            _ => Err(seal_flow::Error::Format(seal_flow::error::FormatError::InvalidMessage)),
+        }
     }
 }
 

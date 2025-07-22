@@ -35,6 +35,10 @@ pub struct HandshakeClient<S> {
     ///
     /// 握手过程中使用的密码套件。
     suite: ProtocolSuite,
+    /// A running hash of the handshake transcript for integrity checks.
+    ///
+    /// 用于完整性检查的握手记录的运行哈希。
+    transcript_hasher: Sha256,
     /// The server's long-term public key for verifying signatures.
     ///
     /// 用于验证签名的服务器长期公钥。
@@ -63,6 +67,7 @@ impl HandshakeClient<Ready> {
         Self {
             state: PhantomData,
             suite,
+            transcript_hasher: Sha256::new(),
             server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
@@ -77,12 +82,19 @@ impl HandshakeClient<Ready> {
     ///
     /// 通过创建 `ClientHello` 消息来启动握手。
     /// 这会将客户端转换到 `AwaitingKemPublicKey` 状态，等待服务器的公钥。
-    pub fn start_handshake(self) -> (HandshakeMessage, HandshakeClient<AwaitingKemPublicKey>) {
+    pub fn start_handshake(mut self) -> (HandshakeMessage, HandshakeClient<AwaitingKemPublicKey>) {
         let client_hello = HandshakeMessage::ClientHello;
+
+        // Update the transcript with the ClientHello message.
+        // 使用 ClientHello 消息更新握手记录。
+        let client_hello_bytes =
+            bincode::encode_to_vec(&client_hello, bincode::config::standard()).unwrap();
+        self.transcript_hasher.update(&client_hello_bytes);
 
         let next_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
+            transcript_hasher: self.transcript_hasher,
             server_signature_public_key: self.server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
@@ -111,11 +123,17 @@ impl HandshakeClient<AwaitingKemPublicKey> {
     ///
     /// 成功完成后，客户端转换到 `Established` 状态。
     pub fn process_server_hello(
-        self,
+        mut self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
         aad: Option<&[u8]>,
     ) -> Result<(HandshakeMessage, HandshakeClient<Established>)> {
+        // Update the transcript with the ServerHello message before processing it.
+        // 在处理 ServerHello 消息之前，先用它更新握手记录。
+        let server_hello_bytes =
+            bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
+        self.transcript_hasher.update(&server_hello_bytes);
+
         // Extract the server's public key and KEM algorithm from the message.
         // 从消息中提取服务器的公钥和 KEM 算法。
         let (server_pk, kem_algorithm, signature) = match message {
@@ -216,6 +234,9 @@ impl HandshakeClient<AwaitingKemPublicKey> {
             params,
             kem_algorithm,
             kdf_params,
+            signature_algorithm: None,
+            signed_transcript_hash: None,
+            transcript_signature: None,
         };
 
         let encrypted_message = EncryptionConfigurator::new(
@@ -234,12 +255,19 @@ impl HandshakeClient<AwaitingKemPublicKey> {
             encapsulated_key,
         };
 
+        // Update the transcript with the ClientKeyExchange message before transitioning state.
+        // 在转换状态之前，使用 ClientKeyExchange 消息更新握手记录。
+        let key_exchange_bytes =
+            bincode::encode_to_vec(&key_exchange_msg, bincode::config::standard()).unwrap();
+        self.transcript_hasher.update(&key_exchange_bytes);
+
         // Transition to the `Established` state, storing the derived keys.
         //
         // 转换到 `Established` 状态，并存储派生的密钥。
         let established_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
+            transcript_hasher: self.transcript_hasher,
             server_signature_public_key: self.server_signature_public_key,
             encryption_key: Some(encryption_key),
             decryption_key: Some(decryption_key),
@@ -287,6 +315,9 @@ impl HandshakeClient<Established> {
             params,
             kem_algorithm: self.suite.kem().algorithm(),
             kdf_params,
+            signature_algorithm: None,
+            signed_transcript_hash: None,
+            transcript_signature: None,
         };
 
         EncryptionConfigurator::new(header, Cow::Borrowed(key), Some(aad.to_vec()))
@@ -315,9 +346,14 @@ impl HandshakeClient<Established> {
             .ok_or(HandshakeError::InvalidState)?;
 
         // Prepare the decryption by parsing the header from the encrypted message.
+        // This will now also trigger the `verify_signature` check within the header.
         //
         // 通过从加密消息中解析头部来准备解密。
-        let pending_decryption = prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message)?;
+        // 这也将触发头部内的 `verify_signature` 检查。
+        let pending_decryption = prepare_decryption_from_slice::<EncryptedHeader>(
+            &encrypted_message,
+            Some(&self.server_signature_public_key),
+        )?;
 
         // Perform the decryption and authentication.
         //

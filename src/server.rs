@@ -38,6 +38,10 @@ pub struct HandshakeServer<S> {
     ///
     /// 握手过程中使用的密码套件。
     suite: ProtocolSuite,
+    /// A running hash of the handshake transcript for integrity checks.
+    ///
+    /// 用于完整性检查的握手记录的运行哈希。
+    transcript_hasher: Sha256,
     /// The server's long-term identity key pair for signing.
     ///
     /// 服务器用于签名的长期身份密钥对。
@@ -71,6 +75,7 @@ impl HandshakeServer<Ready> {
         Self {
             state: PhantomData,
             suite,
+            transcript_hasher: Sha256::new(),
             signature_key_pair,
             kem_key_pair: None,
             encryption_key: None,
@@ -92,9 +97,15 @@ impl HandshakeServer<Ready> {
     /// 并用包含公钥的 `ServerHello` 进行响应。
     /// 然后它转换到 `AwaitingKeyExchange` 状态。
     pub fn process_client_hello(
-        self,
+        mut self,
         message: HandshakeMessage,
     ) -> Result<(HandshakeMessage, HandshakeServer<AwaitingKeyExchange>)> {
+        // Update transcript with ClientHello before processing.
+        // 在处理之前，使用 ClientHello 更新握手记录。
+        let client_hello_bytes =
+            bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
+        self.transcript_hasher.update(&client_hello_bytes);
+
         match message {
             HandshakeMessage::ClientHello => {
                 let kem = self.suite.kem();
@@ -118,9 +129,16 @@ impl HandshakeServer<Ready> {
                     signature,
                 };
 
+                // Update transcript with ServerHello before sending.
+                // 在发送之前，使用 ServerHello 更新握手记录。
+                let server_hello_bytes =
+                    bincode::encode_to_vec(&server_hello, bincode::config::standard()).unwrap();
+                self.transcript_hasher.update(&server_hello_bytes);
+
                 let next_server = HandshakeServer {
                     state: PhantomData,
                     suite: self.suite,
+                    transcript_hasher: self.transcript_hasher,
                     signature_key_pair: self.signature_key_pair,
                     kem_key_pair: Some(kem_key_pair),
                     encryption_key: None,
@@ -157,6 +175,12 @@ impl HandshakeServer<AwaitingKeyExchange> {
         message: HandshakeMessage,
         aad: &[u8],
     ) -> Result<(Vec<u8>, HandshakeServer<Established>)> {
+        // Update transcript with ClientKeyExchange before processing.
+        // 在处理之前，使用 ClientKeyExchange 更新握手记录。
+        let key_exchange_bytes =
+            bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
+        self.transcript_hasher.update(&key_exchange_bytes);
+
         // Extract the encrypted message and encapsulated key from the client's message.
         // 从客户端消息中提取加密消息和封装的密钥。
         let (encrypted_message, encapsulated_key) = match message {
@@ -175,9 +199,12 @@ impl HandshakeServer<AwaitingKeyExchange> {
             .ok_or(HandshakeError::InvalidState)?;
 
         // Parse the header from the encrypted message to get KDF/AEAD parameters.
+        // The client does not send a transcript signature, so `verify_key` is `None`.
+        //
         // 从加密消息中解析头部以获取 KDF/AEAD 参数。
+        // 客户端不发送握手记录签名，因此 `verify_key` 为 `None`。
         let pending_decryption =
-            prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message)?;
+            prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message, None)?;
         let header = pending_decryption.header().clone();
 
         // KEM: Decapsulate the shared secret using the server's private key.
@@ -215,6 +242,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
         let established_server = HandshakeServer {
             state: PhantomData,
             suite: self.suite,
+            transcript_hasher: self.transcript_hasher,
             signature_key_pair: self.signature_key_pair,
             kem_key_pair: None, // Consumed
             encryption_key: Some(encryption_key),
@@ -227,13 +255,34 @@ impl HandshakeServer<AwaitingKeyExchange> {
 
 impl HandshakeServer<Established> {
     /// Encrypts application data using the established server-to-client session key.
+    /// If a signature scheme is configured, it will also sign the handshake transcript
+    /// and include the signature in the header of the first encrypted message.
     ///
     /// 使用已建立的服务器到客户端的会话密钥来加密应用数据。
+    /// 如果配置了签名方案，它还将对握手记录进行签名，并将签名包含在第一个加密消息的头部。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
         let key = self
             .encryption_key
             .as_ref()
             .ok_or(HandshakeError::InvalidState)?;
+
+        let (signature_algorithm, signed_transcript_hash, transcript_signature) =
+            if let Some(signer) = self.suite.signature() {
+                // Finalize the transcript hash.
+                let transcript_hash = self.transcript_hasher.clone().finalize().to_vec();
+
+                // Sign the hash.
+                let signature =
+                    signer.sign(&transcript_hash, &self.signature_key_pair.private_key())?;
+
+                (
+                    Some(signer.algorithm()),
+                    Some(transcript_hash),
+                    Some(signature),
+                )
+            } else {
+                (None, None, None)
+            };
 
         let aead = self.suite.aead();
         let params = SymmetricParamsBuilder::new(aead.algorithm(), 4096)
@@ -252,6 +301,9 @@ impl HandshakeServer<Established> {
             params,
             kem_algorithm: self.suite.kem().algorithm(),
             kdf_params,
+            signature_algorithm,
+            signed_transcript_hash,
+            transcript_signature,
         };
 
         EncryptionConfigurator::new(header, Cow::Borrowed(key), Some(aad.to_vec()))
@@ -270,8 +322,11 @@ impl HandshakeServer<Established> {
             .ok_or(HandshakeError::InvalidState)?;
 
         // Prepare the decryption by parsing the header from the encrypted message.
+        // Client application data does not have a transcript signature, so `verify_key` is `None`.
+        //
         // 通过从加密消息中解析头部来准备解密。
-        let pending_decryption = prepare_decryption_from_slice::<EncryptedHeader>(ciphertext)?;
+        // 客户端应用数据没有握手记录签名，因此 `verify_key` 为 `None`。
+        let pending_decryption = prepare_decryption_from_slice::<EncryptedHeader>(ciphertext, None)?;
 
         // Perform the decryption and authentication.
         // 执行解密和身份验证。
