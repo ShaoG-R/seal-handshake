@@ -44,11 +44,11 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     let server = HandshakeServer::builder()
         .suite(suite.clone())
         .signature_key_pair(server_identity_key_pair)
-        .build()?;
+        .build();
     let client = HandshakeClient::builder()
         .suite(suite)
         .server_signature_public_key(server_identity_public_key)
-        .build()?;
+        .build();
 
     // --- 4. Handshake ---
     println!("--- Starting handshake ---");
@@ -141,11 +141,11 @@ fn test_kem_only_handshake() -> Result<()> {
     let server = HandshakeServer::builder()
         .suite(suite.clone())
         .signature_key_pair(())
-        .build()?;
+        .build();
     let client = HandshakeClient::builder()
         .suite(suite)
         .server_signature_public_key(())
-        .build()?;
+        .build();
 
     // --- 4. Handshake ---
     println!("--- Starting KEM-only handshake ---");
@@ -244,11 +244,11 @@ fn test_handshake_with_resumption() -> Result<()> {
         .suite(suite.clone())
         .signature_key_pair(server_identity_key_pair.clone())
         .ticket_encryption_key(ticket_encryption_key.clone())
-        .build()?;
+        .build();
     let initial_client = HandshakeClient::builder()
         .suite(suite.clone())
         .server_signature_public_key(server_identity_public_key.clone())
-        .build()?;
+        .build();
 
     let (client_hello, initial_client) = initial_client.start_handshake();
     let (server_hello, initial_server) = initial_server.process_client_hello(client_hello)?;
@@ -272,12 +272,12 @@ fn test_handshake_with_resumption() -> Result<()> {
         .suite(suite.clone())
         .signature_key_pair(server_identity_key_pair)
         .ticket_encryption_key(ticket_encryption_key)
-        .build()?;
+        .build();
     let resumption_client = HandshakeClient::builder()
         .suite(suite)
         .server_signature_public_key(server_identity_public_key)
         .resumption_data(master_secret_for_resumption, ticket_for_resumption)
-        .build()?;
+        .build();
 
     let (client_hello_resume, resumption_client) = resumption_client.start_handshake();
     let (server_hello_resume, resumption_server) =
