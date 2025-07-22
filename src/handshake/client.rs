@@ -3,24 +3,25 @@
 
 use crate::crypto::{
     keys::SessionKeysAndMaster,
-    suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature, WithoutSignature},
+    suite::{
+        KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature, WithoutSignature,
+    },
 };
 use crate::protocol::{
     state::{AwaitingKemPublicKey, Established, Ready},
     transcript::Transcript,
 };
+use builder::Missing;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use std::marker::PhantomData;
-use builder::Missing;
 
 mod builder;
-mod state_ready;
 mod state_awaiting_kem;
 mod state_established;
+mod state_ready;
 
 pub use builder::HandshakeClientBuilder;
-
 
 /// The client-side handshake state machine.
 ///
@@ -89,4 +90,4 @@ pub struct HandshakeClient<State, Sig: SignaturePresence> {
     ///
     /// 来自前一个会话的票据，发送给服务器以进行恢复。
     session_ticket_to_send: Option<Vec<u8>>,
-} 
+}

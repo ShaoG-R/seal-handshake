@@ -24,13 +24,13 @@ fn prepare_key_payload(
     kem_pk: &TypedKemPublicKey,
     key_agreement_pk: &Option<TypedKeyAgreementPublicKey>,
 ) -> Result<Vec<u8>> {
-    let kem_pk_bytes =
-        bincode::encode_to_vec(kem_pk, bincode::config::standard()).map_err(HandshakeError::from)?;
+    let kem_pk_bytes = bincode::encode_to_vec(kem_pk, bincode::config::standard())
+        .map_err(HandshakeError::from)?;
 
     if let Some(ka_pk) = key_agreement_pk {
         let mut combined = kem_pk_bytes;
-        let ka_pk_bytes =
-            bincode::encode_to_vec(ka_pk, bincode::config::standard()).map_err(HandshakeError::from)?;
+        let ka_pk_bytes = bincode::encode_to_vec(ka_pk, bincode::config::standard())
+            .map_err(HandshakeError::from)?;
         combined.extend_from_slice(&ka_pk_bytes);
         Ok(combined)
     } else {
@@ -65,4 +65,4 @@ pub fn verify_ephemeral_keys(
     verifier
         .verify(&payload, identity_pk, signature)
         .map_err(|_| HandshakeError::InvalidSignature)
-} 
+}

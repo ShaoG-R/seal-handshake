@@ -1,6 +1,6 @@
-pub mod error;
 pub mod crypto;
-pub mod protocol;
+pub mod error;
 pub mod handshake;
+pub mod protocol;
 
 pub use seal_flow::crypto::bincode;

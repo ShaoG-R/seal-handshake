@@ -1,4 +1,3 @@
-
 use super::{HandshakeClient, ProtocolSuite, Ready, SignaturePresence};
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use std::marker::PhantomData;
@@ -40,7 +39,10 @@ impl<S, K, Sig: SignaturePresence> HandshakeClientBuilder<S, K, Sig> {
     /// Sets the protocol suite for the handshake.
     ///
     /// 设置握手所用的协议套件。
-    pub fn suite(self, suite: ProtocolSuite<Sig>) -> HandshakeClientBuilder<ProtocolSuite<Sig>, K, Sig> {
+    pub fn suite(
+        self,
+        suite: ProtocolSuite<Sig>,
+    ) -> HandshakeClientBuilder<ProtocolSuite<Sig>, K, Sig> {
         HandshakeClientBuilder {
             suite,
             server_signature_public_key: self.server_signature_public_key,
@@ -104,4 +106,4 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<ProtocolSuite<Sig>, Sig::Cli
             session_ticket_to_send: self.session_ticket,
         }
     }
-} 
+}

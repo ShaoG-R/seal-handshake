@@ -1,19 +1,13 @@
-
 use super::{Established, HandshakeClient, SignaturePresence, WithSignature, WithoutSignature};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use seal_flow::{
     common::header::AeadParamsBuilder,
-    crypto::{
-        keys::asymmetric::kem::SharedSecret,
-        prelude::*,
-        traits::{AeadAlgorithmTrait},
-    },
-    prelude::{prepare_decryption_from_slice, EncryptionConfigurator},
-    rand::{rngs::OsRng, TryRngCore},
+    crypto::{keys::asymmetric::kem::SharedSecret, prelude::*, traits::AeadAlgorithmTrait},
+    prelude::{EncryptionConfigurator, prepare_decryption_from_slice},
+    rand::{TryRngCore, rngs::OsRng},
 };
 use std::borrow::Cow;
-
 
 impl<Sig: SignaturePresence> HandshakeClient<Established, Sig> {
     /// Encrypts application data using the established client-to-server session key.
@@ -169,4 +163,4 @@ impl HandshakeClient<Established, WithoutSignature> {
             .decrypt_ordinary(Cow::Borrowed(key), Some(aad.to_vec()))
             .map_err(Into::into)
     }
-} 
+}

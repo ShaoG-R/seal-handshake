@@ -1,4 +1,3 @@
-
 use super::{HandshakeServer, ProtocolSuite, Ready, SignaturePresence};
 use crate::protocol::transcript::Transcript;
 use seal_flow::crypto::prelude::*;
@@ -39,7 +38,10 @@ impl<S, K, Sig: SignaturePresence> HandshakeServerBuilder<S, K, Sig> {
     /// Sets the protocol suite for the handshake.
     ///
     /// 设置握手所用的协议套件。
-    pub fn suite(self, suite: ProtocolSuite<Sig>) -> HandshakeServerBuilder<ProtocolSuite<Sig>, K, Sig> {
+    pub fn suite(
+        self,
+        suite: ProtocolSuite<Sig>,
+    ) -> HandshakeServerBuilder<ProtocolSuite<Sig>, K, Sig> {
         HandshakeServerBuilder {
             suite,
             signature_key_pair: self.signature_key_pair,
@@ -102,4 +104,4 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<ProtocolSuite<Sig>, Sig::Ser
             resumption_master_secret: None,
         }
     }
-} 
+}

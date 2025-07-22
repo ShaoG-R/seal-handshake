@@ -1,16 +1,16 @@
 //! Integration test for the complete handshake protocol.
 //! 对完整握手协议的集成测试。
 
-use seal_handshake::handshake::client::HandshakeClient;
-use seal_handshake::error::Result;
-use seal_handshake::handshake::server::HandshakeServer;
-use seal_handshake::crypto::suite::ProtocolSuiteBuilder;
 use seal_flow::crypto::algorithms::{
+    aead::AeadAlgorithm,
     asymmetric::{kem::KemAlgorithm, signature::SignatureAlgorithm},
     kdf::key::KdfKeyAlgorithm,
-    aead::AeadAlgorithm,
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
+use seal_handshake::crypto::suite::ProtocolSuiteBuilder;
+use seal_handshake::error::Result;
+use seal_handshake::handshake::client::HandshakeClient;
+use seal_handshake::handshake::server::HandshakeServer;
 use seal_handshake::protocol::message::HandshakeMessage;
 
 #[test]
@@ -23,9 +23,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     let aead = AeadAlgorithm::build().aes256_gcm();
     let kdf = KdfKeyAlgorithm::build().hkdf_sha256();
 
-    let server_identity_key_pair = signature_algorithm
-        .into_wrapper()
-        .generate_keypair()?;
+    let server_identity_key_pair = signature_algorithm.into_wrapper().generate_keypair()?;
     let server_identity_public_key = server_identity_key_pair.public_key().clone();
 
     // --- 2. Protocol Suite Initialization ---
@@ -252,7 +250,8 @@ fn test_handshake_with_resumption() -> Result<()> {
 
     let (client_hello, initial_client) = initial_client.start_handshake();
     let (server_hello, initial_server) = initial_server.process_client_hello(client_hello)?;
-    let (key_exchange, mut initial_client) = initial_client.process_server_hello(server_hello, None, None)?;
+    let (key_exchange, mut initial_client) =
+        initial_client.process_server_hello(server_hello, None, None)?;
     let (_, initial_server) = initial_server.process_client_key_exchange(key_exchange, b"")?;
 
     println!("--- Initial handshake successful ---");
@@ -299,4 +298,4 @@ fn test_handshake_with_resumption() -> Result<()> {
     println!("--- Data exchange after resumption successful ---");
 
     Ok(())
-} 
+}

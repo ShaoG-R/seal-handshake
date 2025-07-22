@@ -1,9 +1,8 @@
-
 use super::{Established, HandshakeServer, SignaturePresence};
 use crate::bincode;
+use crate::crypto::suite::{WithSignature, WithoutSignature};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams};
-use crate::crypto::{suite::{WithSignature, WithoutSignature}};
 use seal_flow::{
     common::header::AeadParamsBuilder,
     crypto::{
@@ -12,14 +11,13 @@ use seal_flow::{
         traits::{AeadAlgorithmTrait, KdfKeyAlgorithmTrait, SignatureAlgorithmTrait},
         wrappers::asymmetric::signature::SignatureWrapper,
     },
-    prelude::{prepare_decryption_from_slice, EncryptionConfigurator},
-    rand::{rngs::OsRng, TryRngCore},
+    prelude::{EncryptionConfigurator, prepare_decryption_from_slice},
+    rand::{TryRngCore, rngs::OsRng},
 };
 use std::{
     borrow::Cow,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-
 
 // --- `encrypt` and `decrypt` implementations ---
 
@@ -66,8 +64,8 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
             .build();
 
         let header = EncryptedHeader {
-                params,
-                // These fields are not relevant for ticket encryption but are part of the struct.
+            params,
+            // These fields are not relevant for ticket encryption but are part of the struct.
             kdf_params: KdfParams {
                 algorithm: self.suite.kdf().algorithm(),
                 salt: None,
@@ -79,10 +77,9 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
         };
 
         // Note: The AAD is empty here as there's no additional data to authenticate.
-        let encrypted_ticket =
-            EncryptionConfigurator::new(header, Cow::Borrowed(tek), None)
-                .into_writer(Vec::new())?
-                .encrypt_ordinary_to_vec(&serialized_ticket)?;
+        let encrypted_ticket = EncryptionConfigurator::new(header, Cow::Borrowed(tek), None)
+            .into_writer(Vec::new())?
+            .encrypt_ordinary_to_vec(&serialized_ticket)?;
 
         Ok(HandshakeMessage::NewSessionTicket {
             ticket: encrypted_ticket,
@@ -191,7 +188,8 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
         // 通过从加密消息中解析头部来准备解密。
         // 对于来自客户端的应用数据，没有需要验证的握手记录签名，
         // 因此 `verify_key` 为 `None`。消息的完整性由 AEAD 标签保护。
-        let pending_decryption = prepare_decryption_from_slice::<EncryptedHeader>(ciphertext, None)?;
+        let pending_decryption =
+            prepare_decryption_from_slice::<EncryptedHeader>(ciphertext, None)?;
 
         // Perform the decryption. The AEAD algorithm will simultaneously decrypt the data and
         // verify its authenticity and integrity using the key and the AAD.
@@ -202,4 +200,4 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
             .decrypt_ordinary(Cow::Borrowed(key), Some(aad.to_vec()))
             .map_err(Into::into)
     }
-} 
+}

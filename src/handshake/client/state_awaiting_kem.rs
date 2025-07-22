@@ -1,5 +1,7 @@
-
-use super::{AwaitingKemPublicKey, EncapsulatedKey, Established, HandshakeClient, SessionKeysAndMaster, SignaturePresence, WithSignature, WithoutSignature};
+use super::{
+    AwaitingKemPublicKey, EncapsulatedKey, Established, HandshakeClient, SessionKeysAndMaster,
+    SignaturePresence, WithSignature, WithoutSignature,
+};
 use crate::crypto::keys::derive_session_keys;
 use crate::crypto::signature::verify_ephemeral_keys;
 use crate::error::{HandshakeError, Result};
@@ -12,15 +14,12 @@ use seal_flow::{
     crypto::{
         prelude::*,
         traits::{AeadAlgorithmTrait, KemAlgorithmTrait},
-        wrappers::{
-            asymmetric::signature::SignatureWrapper,
-        },
+        wrappers::asymmetric::signature::SignatureWrapper,
     },
     prelude::EncryptionConfigurator,
-    rand::{rngs::OsRng, TryRngCore},
+    rand::{TryRngCore, rngs::OsRng},
 };
 use std::{borrow::Cow, marker::PhantomData};
-
 
 impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
     /// Processes `ServerHello` for a suite with a signature scheme.
@@ -135,11 +134,8 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
     aad: Option<&[u8]>,
 ) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig>)> {
     // --- Key Derivation ---
-    let (session_keys, encapsulated_key) = derive_session_keys_from_server_hello(
-        &client,
-        server_kem_pk,
-        server_key_agreement_pk,
-    )?;
+    let (session_keys, encapsulated_key) =
+        derive_session_keys_from_server_hello(&client, server_kem_pk, server_key_agreement_pk)?;
 
     // --- Create ClientKeyExchange ---
     let key_exchange_msg = create_client_key_exchange(
@@ -182,9 +178,10 @@ fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
     let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
 
     // Key Agreement: If negotiated, compute the shared secret.
-    let shared_secret_agreement = if let (Some(engine), Some(server_pk)) =
-        (client.key_agreement_engine.as_ref(), &server_key_agreement_pk)
-    {
+    let shared_secret_agreement = if let (Some(engine), Some(server_pk)) = (
+        client.key_agreement_engine.as_ref(),
+        &server_key_agreement_pk,
+    ) {
         Some(engine.agree(server_pk)?)
     } else {
         None
@@ -196,7 +193,7 @@ fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
         shared_secret_kem,
         shared_secret_agreement,
         client.resumption_master_secret.clone(), // Use the resumption secret
-        true, // is_client = true
+        true,                                    // is_client = true
     )?;
 
     Ok((session_keys, encapsulated_key))
@@ -231,17 +228,14 @@ fn create_client_key_exchange<Sig: SignaturePresence>(
         transcript_signature: None,
     };
 
-    let encrypted_message = EncryptionConfigurator::new(
-        header,
-        Cow::Borrowed(encryption_key),
-        Some(aad.to_vec()),
-    )
-    .into_writer(Vec::new())?
-    .encrypt_ordinary_to_vec(initial_payload.unwrap_or(&[]))?;
+    let encrypted_message =
+        EncryptionConfigurator::new(header, Cow::Borrowed(encryption_key), Some(aad.to_vec()))
+            .into_writer(Vec::new())?
+            .encrypt_ordinary_to_vec(initial_payload.unwrap_or(&[]))?;
 
     // Create the `ClientKeyExchange` message.
     Ok(HandshakeMessage::ClientKeyExchange {
         encrypted_message,
         encapsulated_key,
     })
-} 
+}

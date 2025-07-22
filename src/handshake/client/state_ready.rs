@@ -1,7 +1,9 @@
-use super::{AwaitingKemPublicKey, HandshakeClient, HandshakeClientBuilder, KeyAgreementEngine, Missing, Ready, SignaturePresence};
+use super::{
+    AwaitingKemPublicKey, HandshakeClient, HandshakeClientBuilder, KeyAgreementEngine, Missing,
+    Ready, SignaturePresence,
+};
 use crate::protocol::message::HandshakeMessage;
 use std::marker::PhantomData;
-
 
 impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
     /// Creates a new `HandshakeClientBuilder` to construct a `HandshakeClient`.
@@ -26,10 +28,7 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
     /// 然后它会将客户端转换到 `AwaitingKemPublicKey` 状态。
     pub fn start_handshake(
         mut self,
-    ) -> (
-        HandshakeMessage,
-        HandshakeClient<AwaitingKemPublicKey, Sig>,
-    ) {
+    ) -> (HandshakeMessage, HandshakeClient<AwaitingKemPublicKey, Sig>) {
         // If a key agreement algorithm is specified, generate an ephemeral key pair for it.
         // This is the client's contribution to the Diffie-Hellman exchange.
         //
@@ -72,4 +71,4 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
 
         (client_hello, next_client)
     }
-} 
+}

@@ -139,8 +139,6 @@ impl ProtocolSuite<WithSignature> {
     }
 }
 
-
-
 // --- Typestate Builder using Concrete Structs ---
 
 /// The entry point for the builder.
@@ -158,10 +156,7 @@ impl ProtocolSuiteBuilder {
         kem: KemAlgorithmWrapper,
         key_agreement: Option<KeyAgreementAlgorithmWrapper>,
     ) -> BuilderWithKem {
-        BuilderWithKem {
-            kem,
-            key_agreement,
-        }
+        BuilderWithKem { kem, key_agreement }
     }
 }
 
@@ -193,7 +188,6 @@ impl BuilderWithKem {
         }
     }
 }
-
 
 /// State after asymmetric algorithms are set. Requires AEAD.
 pub struct BuilderWithAlgorithms<S: SignaturePresence> {

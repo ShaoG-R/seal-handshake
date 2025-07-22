@@ -1,6 +1,5 @@
-use thiserror::Error;
 use crate::bincode;
-
+use thiserror::Error;
 
 /// An error related to `bincode` serialization or deserialization.
 ///
@@ -71,7 +70,6 @@ impl From<seal_flow::crypto::error::Error> for HandshakeError {
         HandshakeError::FlowError(err.into())
     }
 }
-
 
 impl From<bincode::error::EncodeError> for HandshakeError {
     fn from(err: bincode::error::EncodeError) -> Self {

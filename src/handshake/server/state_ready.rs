@@ -1,11 +1,14 @@
-
-use super::{AwaitingKeyExchange, HandshakeServer, HandshakeServerBuilder, KeyAgreementEngine, Ready, SignaturePresence, Missing};
-use crate::crypto::{signature::sign_ephemeral_keys, suite::{WithSignature, WithoutSignature}};
+use super::{
+    AwaitingKeyExchange, HandshakeServer, HandshakeServerBuilder, KeyAgreementEngine, Missing,
+    Ready, SignaturePresence,
+};
+use crate::crypto::{
+    signature::sign_ephemeral_keys,
+    suite::{WithSignature, WithoutSignature},
+};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{HandshakeMessage, SessionTicket};
-use seal_flow::crypto::{
-    keys::asymmetric::kem::SharedSecret,
-};
+use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use std::{
     marker::PhantomData,
     time::{SystemTime, UNIX_EPOCH},
@@ -35,24 +38,29 @@ impl HandshakeServer<Ready, WithSignature> {
     pub fn process_client_hello(
         mut self,
         message: HandshakeMessage,
-    ) -> Result<(HandshakeMessage, HandshakeServer<AwaitingKeyExchange, WithSignature>)> {
+    ) -> Result<(
+        HandshakeMessage,
+        HandshakeServer<AwaitingKeyExchange, WithSignature>,
+    )> {
         self.transcript.update(&message);
 
-        let (client_key_agreement_pk, resumption_master_secret) =
-            match message {
-                HandshakeMessage::ClientHello {
+        let (client_key_agreement_pk, resumption_master_secret) = match message {
+            HandshakeMessage::ClientHello {
+                key_agreement_public_key,
+                session_ticket,
+                kem_algorithm,
+            } => {
+                if kem_algorithm != self.suite.kem().algorithm() {
+                    return Err(HandshakeError::InvalidKemAlgorithm);
+                }
+                (
                     key_agreement_public_key,
-                    session_ticket,
-                    kem_algorithm,
-                } => {
-                    if kem_algorithm != self.suite.kem().algorithm() {
-                        return Err(HandshakeError::InvalidKemAlgorithm);
-                    }
-                    (key_agreement_public_key, self.try_decode_ticket(session_ticket)?)
-                },
-                _ => return Err(HandshakeError::InvalidMessage),
-            };
-        
+                    self.try_decode_ticket(session_ticket)?,
+                )
+            }
+            _ => return Err(HandshakeError::InvalidMessage),
+        };
+
         self.resumption_master_secret = resumption_master_secret;
 
         // KEM key generation
@@ -129,21 +137,23 @@ impl HandshakeServer<Ready, WithoutSignature> {
     )> {
         self.transcript.update(&message);
 
-        let (client_key_agreement_pk, resumption_master_secret) =
-            match message {
-                HandshakeMessage::ClientHello {
+        let (client_key_agreement_pk, resumption_master_secret) = match message {
+            HandshakeMessage::ClientHello {
+                key_agreement_public_key,
+                session_ticket,
+                kem_algorithm,
+            } => {
+                if kem_algorithm != self.suite.kem().algorithm() {
+                    return Err(HandshakeError::InvalidKemAlgorithm);
+                }
+                (
                     key_agreement_public_key,
-                    session_ticket,
-                    kem_algorithm,
-                } => {
-                    if kem_algorithm != self.suite.kem().algorithm() {
-                        return Err(HandshakeError::InvalidKemAlgorithm);
-                    }
-                    (key_agreement_public_key, self.try_decode_ticket(session_ticket)?)
-                },
-                _ => return Err(HandshakeError::InvalidMessage),
-            };
-        
+                    self.try_decode_ticket(session_ticket)?,
+                )
+            }
+            _ => return Err(HandshakeError::InvalidMessage),
+        };
+
         self.resumption_master_secret = resumption_master_secret;
 
         // KEM key generation
@@ -194,7 +204,6 @@ impl HandshakeServer<Ready, WithoutSignature> {
     }
 }
 
-
 impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
     /// Attempts to decrypt and validate a session ticket.
     ///
@@ -203,22 +212,21 @@ impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
     /// 尝试解密并验证会话票据。
     ///
     /// 如果票据有效，则返回主密钥，否则返回 `None`。
-    fn try_decode_ticket(
-        &self,
-        encrypted_ticket: Option<Vec<u8>>,
-    ) -> Result<Option<SharedSecret>> {
-        let (tek, encrypted_ticket) =
-            match (self.ticket_encryption_key.as_ref(), encrypted_ticket) {
-                (Some(tek), Some(ticket)) => (tek, ticket),
-                // If no key or no ticket, we can't resume.
-                _ => return Ok(None),
-            };
+    fn try_decode_ticket(&self, encrypted_ticket: Option<Vec<u8>>) -> Result<Option<SharedSecret>> {
+        let (tek, encrypted_ticket) = match (self.ticket_encryption_key.as_ref(), encrypted_ticket)
+        {
+            (Some(tek), Some(ticket)) => (tek, ticket),
+            // If no key or no ticket, we can't resume.
+            _ => return Ok(None),
+        };
 
         // Decrypt the ticket.
-        let pending_decryption =
-            seal_flow::prelude::prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_ticket, None)?;
+        let pending_decryption = seal_flow::prelude::prepare_decryption_from_slice::<
+            EncryptedHeader,
+        >(&encrypted_ticket, None)?;
 
-        let serialized_ticket = pending_decryption.decrypt_ordinary(std::borrow::Cow::Borrowed(tek), None)?;
+        let serialized_ticket =
+            pending_decryption.decrypt_ordinary(std::borrow::Cow::Borrowed(tek), None)?;
 
         // Deserialize and validate the ticket.
         let ticket: SessionTicket =
@@ -237,4 +245,4 @@ impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
 
         Ok(Some(ticket.master_secret))
     }
-} 
+}

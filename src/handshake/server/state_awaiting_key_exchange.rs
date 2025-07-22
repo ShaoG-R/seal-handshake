@@ -1,11 +1,10 @@
-
 use super::{AwaitingKeyExchange, Established, HandshakeServer, SignaturePresence};
-use crate::crypto::keys::{derive_session_keys, SessionKeysAndMaster};
+use crate::crypto::keys::{SessionKeysAndMaster, derive_session_keys};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{EncryptedHeader, HandshakeMessage};
 use seal_flow::{
     crypto::{prelude::*, traits::KemAlgorithmTrait},
-    prelude::{prepare_decryption_from_slice, PendingDecryption},
+    prelude::{PendingDecryption, prepare_decryption_from_slice},
 };
 use std::{borrow::Cow, marker::PhantomData};
 
@@ -34,8 +33,7 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
     ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig>)> {
         self.transcript.update(&message);
 
-        let (encrypted_message, encapsulated_key) =
-            extract_client_key_exchange(&message)?;
+        let (encrypted_message, encapsulated_key) = extract_client_key_exchange(&message)?;
 
         let kem_key_pair = self
             .kem_key_pair
@@ -45,17 +43,11 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
         let pending_decryption =
             prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message, None)?;
 
-        let session_keys = derive_session_keys_from_client_exchange(
-            &self,
-            &kem_key_pair,
-            &encapsulated_key,
-        )?;
+        let session_keys =
+            derive_session_keys_from_client_exchange(&self, &kem_key_pair, &encapsulated_key)?;
 
-        let initial_payload = decrypt_initial_payload(
-            pending_decryption,
-            &session_keys.decryption_key,
-            aad,
-        )?;
+        let initial_payload =
+            decrypt_initial_payload(pending_decryption, &session_keys.decryption_key, aad)?;
 
         let established_server = HandshakeServer {
             state: PhantomData,
@@ -77,9 +69,7 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
 }
 
 /// Extracts the contents of a `ClientKeyExchange` message.
-fn extract_client_key_exchange(
-    message: &HandshakeMessage,
-) -> Result<(Vec<u8>, EncapsulatedKey)> {
+fn extract_client_key_exchange(message: &HandshakeMessage) -> Result<(Vec<u8>, EncapsulatedKey)> {
     match message {
         HandshakeMessage::ClientKeyExchange {
             encrypted_message,
@@ -96,8 +86,7 @@ fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
     encapsulated_key: &EncapsulatedKey,
 ) -> Result<SessionKeysAndMaster> {
     let kem = kem_key_pair.algorithm().into_wrapper();
-    let shared_secret =
-        kem.decapsulate_key(&kem_key_pair.private_key(), encapsulated_key)?;
+    let shared_secret = kem.decapsulate_key(&kem_key_pair.private_key(), encapsulated_key)?;
 
     derive_session_keys(
         &server.suite,
@@ -117,4 +106,4 @@ fn decrypt_initial_payload(
     pending_decryption
         .decrypt_ordinary(Cow::Borrowed(decryption_key), Some(aad.to_vec()))
         .map_err(Into::into)
-} 
+}

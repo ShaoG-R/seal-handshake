@@ -51,4 +51,4 @@ impl Default for Transcript {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

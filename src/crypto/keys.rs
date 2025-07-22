@@ -9,8 +9,8 @@
 //! 该模块集中了客户端和服务器在初始密钥交换完成后使用的密钥派生逻辑（KDF）。
 //! 它确保双方使用相同的参数派生出相同的会话密钥。
 
-use crate::error::Result;
 use crate::crypto::suite::{ProtocolSuite, SignaturePresence};
+use crate::error::Result;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::AeadAlgorithmTrait;
@@ -75,10 +75,9 @@ pub fn derive_session_keys<S: SignaturePresence>(
         &master_kdf_input,
         salt,
         Some(b"seal-handshake-master"), // "master" context
-        32, // Assuming a 32-byte master secret length
+        32,                             // Assuming a 32-byte master secret length
     )?;
     let master_secret = SharedSecret(raw_master_secret);
-
 
     // 4. Derive client-to-server key from the new master secret.
     // 4. 从新的主密钥派生客户端到服务器的密钥。
@@ -113,4 +112,4 @@ pub fn derive_session_keys<S: SignaturePresence>(
             master_secret,
         })
     }
-} 
+}

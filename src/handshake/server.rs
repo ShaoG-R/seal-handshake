@@ -1,20 +1,24 @@
 //! Implements the server-side of the handshake protocol state machine.
 //! 实现握手协议状态机的服务器端。
 
-use crate::crypto::{
-    suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence},
+use crate::crypto::suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence};
+use crate::protocol::{
+    state::{AwaitingKeyExchange, Established, Ready},
+    transcript::Transcript,
 };
-use crate::protocol::{state::{AwaitingKeyExchange, Established, Ready}, transcript::Transcript};
 use std::marker::PhantomData;
 
 mod builder;
-mod state_ready;
 mod state_awaiting_key_exchange;
 mod state_established;
+mod state_ready;
 
-use builder::Missing;
 pub use builder::HandshakeServerBuilder;
-use seal_flow::crypto::{keys::asymmetric::kem::SharedSecret, prelude::{TypedAeadKey, TypedKemKeyPair}};
+use builder::Missing;
+use seal_flow::crypto::{
+    keys::asymmetric::kem::SharedSecret,
+    prelude::{TypedAeadKey, TypedKemKeyPair},
+};
 
 // --- State Markers ---
 // (State markers are now imported from `crate::state`)
@@ -103,4 +107,4 @@ pub struct HandshakeServer<State, Sig: SignaturePresence> {
     /// 从会话票据中恢复的主密钥（如果有）。
     /// 这在握手期间临时存储。
     resumption_master_secret: Option<SharedSecret>,
-} 
+}
