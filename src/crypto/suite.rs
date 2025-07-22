@@ -1,12 +1,19 @@
 use seal_flow::crypto::{
-    keys::asymmetric::kem::SharedSecret, prelude::{TypedKeyAgreementKeyPair, TypedKeyAgreementPublicKey}, wrappers::{
+    keys::asymmetric::{
+        kem::SharedSecret,
+        key_agreement::{TypedKeyAgreementKeyPair, TypedKeyAgreementPublicKey},
+        signature::{TypedSignatureKeyPair, TypedSignaturePublicKey},
+    },
+    wrappers::{
         aead::AeadAlgorithmWrapper,
         asymmetric::{
-            kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper, signature::SignatureAlgorithmWrapper
+            kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper,
+            signature::SignatureAlgorithmWrapper,
         },
         kdf::key::KdfKeyWrapper,
-    }
+    },
 };
+use std::marker::PhantomData;
 
 /// A helper struct to carry the key agreement key pair during the handshake.
 #[derive(Debug)]
@@ -60,17 +67,55 @@ impl KeyAgreementEngine {
     }
 }
 
+// --- Signature Presence Marker ---
+
+/// A trait to mark whether a signature scheme is included in the protocol suite.
+/// This allows for compile-time checks for required keys.
+///
+/// 一个 trait，用于标记协议套件中是否包含签名方案。
+/// 这允许对所需的密钥进行编译时检查。
+pub trait SignaturePresence: std::fmt::Debug + Clone + Send + Sync + 'static {
+    /// The type of key the server needs for this configuration (key pair or nothing).
+    /// 服务器在此配置下需要的密钥类型（密钥对或无）。
+    type ServerKey;
+    /// The type of key the client needs for this configuration (public key or nothing).
+    /// 客户端在此配置下需要的密钥类型（公钥或无）。
+    type ClientKey;
+}
+
+/// Marker struct for when a signature algorithm is present.
+///
+/// 当签名算法存在时的标记结构体。
+#[derive(Debug, Clone)]
+pub struct WithSignature(pub SignatureAlgorithmWrapper);
+
+impl SignaturePresence for WithSignature {
+    type ServerKey = TypedSignatureKeyPair;
+    type ClientKey = TypedSignaturePublicKey;
+}
+
+/// Marker struct for when no signature algorithm is used.
+///
+/// 当不使用签名算法时的标记结构体。
+#[derive(Debug, Clone)]
+pub struct WithoutSignature;
+
+impl SignaturePresence for WithoutSignature {
+    type ServerKey = ();
+    type ClientKey = ();
+}
+
 // --- Final ProtocolSuite ---
 #[derive(Debug, Clone)]
-pub struct ProtocolSuite {
+pub struct ProtocolSuite<S: SignaturePresence> {
     kem: KemAlgorithmWrapper,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    signature: Option<SignatureAlgorithmWrapper>,
+    signature: S,
     aead: AeadAlgorithmWrapper,
     kdf: KdfKeyWrapper,
 }
 
-impl ProtocolSuite {
+impl<S: SignaturePresence> ProtocolSuite<S> {
     /// Starts building a new ProtocolSuite.
     pub fn builder() -> ProtocolSuiteBuilder {
         ProtocolSuiteBuilder
@@ -84,10 +129,6 @@ impl ProtocolSuite {
         &self.key_agreement
     }
 
-    pub fn signature(&self) -> &Option<SignatureAlgorithmWrapper> {
-        &self.signature
-    }
-
     pub fn aead(&self) -> &AeadAlgorithmWrapper {
         &self.aead
     }
@@ -97,37 +138,72 @@ impl ProtocolSuite {
     }
 }
 
+impl ProtocolSuite<WithSignature> {
+    pub fn signature(&self) -> &SignatureAlgorithmWrapper {
+        &self.signature.0
+    }
+}
+
+impl ProtocolSuite<WithoutSignature> {
+    pub fn signature(&self) -> Option<&SignatureAlgorithmWrapper> {
+        None
+    }
+}
+
+
 // --- Typestate Builder using Concrete Structs ---
 
 /// The entry point for the builder.
 pub struct ProtocolSuiteBuilder;
 
 impl ProtocolSuiteBuilder {
-    /// Sets the core asymmetric algorithms and moves to the next state.
-    pub fn with_algorithms(
+    /// Sets the KEM and optional key agreement algorithm, moving to the signature selection state.
+    pub fn with_kem(
         self,
         kem: KemAlgorithmWrapper,
-        signature: Option<SignatureAlgorithmWrapper>,
         key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    ) -> BuilderWithAlgorithms {
+    ) -> BuilderWithKem {
+        BuilderWithKem { kem, key_agreement }
+    }
+}
+
+/// State after KEM is set. Requires selecting signature configuration.
+pub struct BuilderWithKem {
+    kem: KemAlgorithmWrapper,
+    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+}
+
+impl BuilderWithKem {
+    /// Configures the suite with a signature algorithm.
+    pub fn with_signature(self, signature: SignatureAlgorithmWrapper) -> BuilderWithAlgorithms<WithSignature> {
         BuilderWithAlgorithms {
-            kem,
-            signature,
-            key_agreement,
+            kem: self.kem,
+            key_agreement: self.key_agreement,
+            signature: WithSignature(signature),
+        }
+    }
+
+    /// Configures the suite without a signature algorithm.
+    pub fn without_signature(self) -> BuilderWithAlgorithms<WithoutSignature> {
+        BuilderWithAlgorithms {
+            kem: self.kem,
+            key_agreement: self.key_agreement,
+            signature: WithoutSignature,
         }
     }
 }
 
+
 /// State after asymmetric algorithms are set. Requires AEAD.
-pub struct BuilderWithAlgorithms {
+pub struct BuilderWithAlgorithms<S: SignaturePresence> {
     kem: KemAlgorithmWrapper,
-    signature: Option<SignatureAlgorithmWrapper>,
+    signature: S,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
 }
 
-impl BuilderWithAlgorithms {
+impl<S: SignaturePresence> BuilderWithAlgorithms<S> {
     /// Sets the AEAD algorithm and moves to the next state.
-    pub fn with_aead(self, aead: AeadAlgorithmWrapper) -> BuilderWithAead {
+    pub fn with_aead(self, aead: AeadAlgorithmWrapper) -> BuilderWithAead<S> {
         BuilderWithAead {
             kem: self.kem,
             signature: self.signature,
@@ -138,38 +214,40 @@ impl BuilderWithAlgorithms {
 }
 
 /// State after AEAD is set. Requires KDF.
-pub struct BuilderWithAead {
+pub struct BuilderWithAead<S: SignaturePresence> {
     kem: KemAlgorithmWrapper,
-    signature: Option<SignatureAlgorithmWrapper>,
+    signature: S,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
     aead: AeadAlgorithmWrapper,
 }
 
-impl BuilderWithAead {
+impl<S: SignaturePresence> BuilderWithAead<S> {
     /// Sets the KDF algorithm and moves to the final, buildable state.
-    pub fn with_kdf(self, kdf: KdfKeyWrapper) -> ReadyToBuild {
+    pub fn with_kdf(self, kdf: KdfKeyWrapper) -> ReadyToBuild<S> {
         ReadyToBuild {
             kem: self.kem,
             signature: self.signature,
             key_agreement: self.key_agreement,
             aead: self.aead,
             kdf,
+            _phantom: PhantomData,
         }
     }
 }
 
 /// The final state where the builder can construct a `ProtocolSuite`.
-pub struct ReadyToBuild {
+pub struct ReadyToBuild<S: SignaturePresence> {
     kem: KemAlgorithmWrapper,
-    signature: Option<SignatureAlgorithmWrapper>,
+    signature: S,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
     aead: AeadAlgorithmWrapper,
     kdf: KdfKeyWrapper,
+    _phantom: PhantomData<S>,
 }
 
-impl ReadyToBuild {
+impl<S: SignaturePresence> ReadyToBuild<S> {
     /// Builds the `ProtocolSuite`.
-    pub fn build(self) -> ProtocolSuite {
+    pub fn build(self) -> ProtocolSuite<S> {
         ProtocolSuite {
             kem: self.kem,
             key_agreement: self.key_agreement,

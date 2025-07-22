@@ -11,9 +11,17 @@ use crate::error::{HandshakeError, Result};
 use crate::crypto::{
     keys::derive_session_keys,
     signature::sign_ephemeral_keys,
-    suite::{KeyAgreementEngine, ProtocolSuite},
+    suite::{
+        KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature, WithoutSignature,
+    },
 };
-use seal_flow::common::header::AeadParamsBuilder;
+use seal_flow::{
+    common::header::AeadParamsBuilder,
+    crypto::{
+        algorithms::asymmetric::signature::SignatureAlgorithm,
+        wrappers::asymmetric::signature::SignatureWrapper,
+    },
+};
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
@@ -39,19 +47,19 @@ use std::marker::PhantomData;
 /// 通过泛型状态 `S` 在编译时强制执行协议流程。
 /// 这确保了方法只能按正确的顺序调用，防止了协议实现中的逻辑错误。
 #[derive(Debug)]
-pub struct HandshakeServer<S> {
+pub struct HandshakeServer<State, Sig: SignaturePresence> {
     /// Zero-sized marker to hold the current state `S`.
     /// This doesn't take up space but allows the type system to track the machine's state.
     ///
     /// 零大小标记，用于持有当前状态 `S`。
     /// 它不占用空间，但允许类型系统跟踪机器的状态。
-    state: PhantomData<S>,
+    state: PhantomData<State>,
     /// The cryptographic suite used for the handshake.
     /// This defines the set of algorithms (KEM, AEAD, KDF, etc.) to be used.
     ///
     /// 握手过程中使用的密码套件。
     /// 这定义了要使用的算法集（KEM、AEAD、KDF 等）。
-    suite: ProtocolSuite,
+    suite: ProtocolSuite<Sig>,
     /// A running hash of the handshake transcript for integrity checks.
     /// It accumulates all messages exchanged, and its final hash is signed by the server.
     ///
@@ -63,7 +71,7 @@ pub struct HandshakeServer<S> {
     ///
     /// 服务器用于签名的长期身份密钥对。
     /// 此密钥向客户端证明服务器的身份。
-    signature_key_pair: TypedSignatureKeyPair,
+    signature_key_pair: Sig::ServerKey,
     /// The server's ephemeral KEM key pair, generated for this session.
     /// It is used once to decapsulate the shared secret from the client and then discarded.
     /// Stored as an `Option` because it only exists during a specific phase of the handshake.
@@ -99,17 +107,19 @@ pub struct HandshakeServer<S> {
 }
 
 
-impl HandshakeServer<Ready> {
+impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
     /// Creates a new `HandshakeServer` in the `Ready` state.
     ///
     /// This is the entry point for initiating a server-side handshake.
     /// It requires the server's long-term identity and the desired cryptographic algorithms.
+    /// The `signature_key_pair` is only required if the `ProtocolSuite` was built with a signature scheme.
     ///
     /// 在 `Ready` 状态下创建一个新的 `HandshakeServer`。
     ///
     /// 这是发起服务器端握手的入口点。
     /// 它需要服务器的长期身份和期望的密码学算法。
-    pub fn new(suite: ProtocolSuite, signature_key_pair: TypedSignatureKeyPair) -> Self {
+    /// 仅当 `ProtocolSuite` 配置了签名方案时，才需要 `signature_key_pair`。
+    pub fn new(suite: ProtocolSuite<Sig>, signature_key_pair: Sig::ServerKey) -> Self {
         Self {
             state: PhantomData,
             suite,
@@ -124,120 +134,155 @@ impl HandshakeServer<Ready> {
     }
 }
 
-impl HandshakeServer<Ready> {
-    /// Processes a `ClientHello` message.
+// --- `process_client_hello` implementations ---
+
+impl HandshakeServer<Ready, WithSignature> {
+    /// Processes a `ClientHello` message when a signature scheme is configured.
     ///
-    /// On receiving `ClientHello`, the server:
-    /// 1. Generates ephemeral key pairs (KEM and optional key agreement).
-    /// 2. Signs the ephemeral public keys with its long-term identity key. This binds the ephemeral keys
-    ///    to this specific server for this session, preventing man-in-the-middle attacks.
-    /// 3. Responds with a `ServerHello` containing its ephemeral public keys and the signature.
-    /// 4. Transitions to the `AwaitingKeyExchange` state, ready for the client's response.
+    /// It generates ephemeral keys, signs them, and sends a `ServerHello`.
     ///
-    /// 处理 `ClientHello` 消息。
+    /// 当配置了签名方案时，处理 `ClientHello` 消息。
     ///
-    /// 收到 `ClientHello` 后，服务器会：
-    /// 1. 生成临时密钥对（KEM 和可选的密钥协商）。
-    /// 2. 用其长期身份密钥对临时公钥进行签名。这将临时密钥与本次会话的特定服务器绑定，
-    ///    防止中间人攻击。
-    /// 3. 用包含其临时公钥和签名的 `ServerHello` 进行响应。
-    /// 4. 转换到 `AwaitingKeyExchange` 状态，准备接收客户端的响应。
+    /// 它会生成临时密钥，对其进行签名，并发送 `ServerHello`。
     pub fn process_client_hello(
         mut self,
         message: HandshakeMessage,
-    ) -> Result<(HandshakeMessage, HandshakeServer<AwaitingKeyExchange>)> {
-        // Update transcript with ClientHello. It's crucial to include all messages in the
-        // transcript for the final integrity check (the server's signature).
-        //
-        // 使用 ClientHello 更新握手记录。将所有消息包含在握手记录中对于最终的
-        // 完整性检查（服务器签名）至关重要。
+    ) -> Result<(HandshakeMessage, HandshakeServer<AwaitingKeyExchange, WithSignature>)> {
         self.transcript.update(&message);
 
-        match message {
+        let client_key_agreement_pk = match message {
             HandshakeMessage::ClientHello {
-                key_agreement_public_key: client_key_agreement_pk,
-            } => {
-                // KEM key generation is mandatory for key establishment. An ephemeral key pair is
-                // generated for each new session.
-                //
-                // KEM 密钥生成对于密钥建立是强制性的。每个新会话都会生成一个临时的密钥对。
-                let kem = self.suite.kem();
-                let kem_key_pair = kem.generate_keypair()?;
-                let kem_public_key = kem_key_pair.public_key().clone();
+                key_agreement_public_key,
+            } => key_agreement_public_key,
+            _ => return Err(HandshakeError::InvalidMessage),
+        };
 
-                // Key Agreement is optional. If the client provided a public key and the server
-                // suite supports key agreement, a shared secret is computed. This adds a layer of
-                // security (PFS).
-                //
-                // 密钥协商是可选的。如果客户端提供了公钥且服务器套件支持密钥协商，
-                // 则会计算一个共享密钥。这增加了一层安全性（PFS）。
-                let (server_key_agreement_pk, key_agreement_engine, agreement_shared_secret) =
-                    if let (Some(client_pk), Some(key_agreement)) =
-                        (client_key_agreement_pk, self.suite.key_agreement())
-                    {
-                        let (engine, shared_secret) =
-                            KeyAgreementEngine::new_for_server(key_agreement, &client_pk)?;
+        // KEM key generation
+        let kem = self.suite.kem();
+        let kem_key_pair = kem.generate_keypair()?;
+        let kem_public_key = kem_key_pair.public_key().clone();
 
-                        (
-                            Some(engine.public_key().clone()),
-                            Some(engine),
-                            Some(shared_secret),
-                        )
-                    } else {
-                        (None, None, None)
-                    };
+        // Key Agreement
+        let (server_key_agreement_pk, key_agreement_engine, agreement_shared_secret) =
+            if let (Some(client_pk), Some(key_agreement)) =
+                (client_key_agreement_pk, self.suite.key_agreement())
+            {
+                let (engine, shared_secret) =
+                    KeyAgreementEngine::new_for_server(key_agreement, &client_pk)?;
+                (
+                    Some(engine.public_key().clone()),
+                    Some(engine),
+                    Some(shared_secret),
+                )
+            } else {
+                (None, None, None)
+            };
 
-                // Sign the ephemeral public keys (KEM and optional key agreement) with the server's
-                // long-term identity key. This signature proves to the client that the ephemeral keys
-                // are authentic and belong to the intended server.
-                //
-                // 使用服务器的长期身份密钥对临时公钥（KEM 和可选的密钥协商）进行签名。
-                // 这个签名向客户端证明，临时密钥是真实的，并且属于预期的服务器。
-                let signature = if let Some(signer) = self.suite.signature() {
-                    Some(sign_ephemeral_keys(
-                        signer,
-                        &kem_public_key,
-                        &server_key_agreement_pk,
-                        &self.signature_key_pair.private_key(),
-                    )?)
-                } else {
-                    None
-                };
+        // Sign the ephemeral keys.
+        let signer = self.suite.signature();
+        let signature = sign_ephemeral_keys(
+            signer,
+            &kem_public_key,
+            &server_key_agreement_pk,
+            &self.signature_key_pair.private_key(),
+        )?;
 
-                let server_hello = HandshakeMessage::ServerHello {
-                    kem_public_key,
-                    kem_algorithm: kem.algorithm(),
-                    key_agreement_public_key: server_key_agreement_pk,
-                    signature,
-                };
+        let server_hello = HandshakeMessage::ServerHello {
+            kem_public_key,
+            kem_algorithm: kem.algorithm(),
+            key_agreement_public_key: server_key_agreement_pk,
+            signature: Some(signature),
+        };
 
-                // Update transcript with ServerHello before sending.
-                // This ensures the server's own message is part of the signed transcript.
-                //
-                // 在发送之前，使用 ServerHello 更新握手记录。
-                // 这确保了服务器自己的消息也是已签名的握手记录的一部分。
-                self.transcript.update(&server_hello);
+        self.transcript.update(&server_hello);
 
-                let next_server = HandshakeServer {
-                    state: PhantomData,
-                    suite: self.suite,
-                    transcript: self.transcript,
-                    signature_key_pair: self.signature_key_pair,
-                    kem_key_pair: Some(kem_key_pair),
-                    key_agreement_engine,
-                    agreement_shared_secret,
-                    encryption_key: None,
-                    decryption_key: None,
-                };
+        let next_server = HandshakeServer {
+            state: PhantomData,
+            suite: self.suite,
+            transcript: self.transcript,
+            signature_key_pair: self.signature_key_pair,
+            kem_key_pair: Some(kem_key_pair),
+            key_agreement_engine,
+            agreement_shared_secret,
+            encryption_key: None,
+            decryption_key: None,
+        };
 
-                Ok((server_hello, next_server))
-            }
-            _ => Err(HandshakeError::InvalidMessage),
-        }
+        Ok((server_hello, next_server))
     }
 }
 
-impl HandshakeServer<AwaitingKeyExchange> {
+impl HandshakeServer<Ready, WithoutSignature> {
+    /// Processes a `ClientHello` message when no signature scheme is configured.
+    ///
+    /// It generates ephemeral keys and sends a `ServerHello` without a signature.
+    ///
+    /// 当未配置签名方案时，处理 `ClientHello` 消息。
+    ///
+    /// 它会生成临时密钥，并发送不带签名的 `ServerHello`。
+    pub fn process_client_hello(
+        mut self,
+        message: HandshakeMessage,
+    ) -> Result<(
+        HandshakeMessage,
+        HandshakeServer<AwaitingKeyExchange, WithoutSignature>,
+    )> {
+        self.transcript.update(&message);
+
+        let client_key_agreement_pk = match message {
+            HandshakeMessage::ClientHello {
+                key_agreement_public_key,
+            } => key_agreement_public_key,
+            _ => return Err(HandshakeError::InvalidMessage),
+        };
+
+        // KEM key generation
+        let kem = self.suite.kem();
+        let kem_key_pair = kem.generate_keypair()?;
+        let kem_public_key = kem_key_pair.public_key().clone();
+
+        // Key Agreement
+        let (server_key_agreement_pk, key_agreement_engine, agreement_shared_secret) =
+            if let (Some(client_pk), Some(key_agreement)) =
+                (client_key_agreement_pk, self.suite.key_agreement())
+            {
+                let (engine, shared_secret) =
+                    KeyAgreementEngine::new_for_server(key_agreement, &client_pk)?;
+                (
+                    Some(engine.public_key().clone()),
+                    Some(engine),
+                    Some(shared_secret),
+                )
+            } else {
+                (None, None, None)
+            };
+
+        let server_hello = HandshakeMessage::ServerHello {
+            kem_public_key,
+            kem_algorithm: kem.algorithm(),
+            key_agreement_public_key: server_key_agreement_pk,
+            signature: None,
+        };
+
+        self.transcript.update(&server_hello);
+
+        let next_server = HandshakeServer {
+            state: PhantomData,
+            suite: self.suite,
+            transcript: self.transcript,
+            signature_key_pair: self.signature_key_pair,
+            kem_key_pair: Some(kem_key_pair),
+            key_agreement_engine,
+            agreement_shared_secret,
+            encryption_key: None,
+            decryption_key: None,
+        };
+
+        Ok((server_hello, next_server))
+    }
+}
+
+impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
     /// Processes a `ClientKeyExchange` message.
     ///
     /// This method performs the core server-side key exchange:
@@ -259,7 +304,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
         mut self,
         message: HandshakeMessage,
         aad: &[u8],
-    ) -> Result<(Vec<u8>, HandshakeServer<Established>)> {
+    ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig>)> {
         // Update transcript with the client's key exchange message.
         // 使用客户端的密钥交换消息更新握手记录。
         self.transcript.update(&message);
@@ -347,97 +392,90 @@ impl HandshakeServer<AwaitingKeyExchange> {
     }
 }
 
-impl HandshakeServer<Established> {
-    /// Encrypts application data using the established server-to-client session key.
+// --- `encrypt` and `decrypt` implementations ---
+
+impl HandshakeServer<Established, WithSignature> {
+    /// Encrypts data and signs the transcript when a signature scheme is configured.
     ///
-    /// For the first message sent in the `Established` state, this method also signs
-    /// the entire handshake transcript and includes the signature in the encrypted message's header.
-    /// This proves to the client that the server successfully completed the handshake and provides
-    /// tamper-resistance for the entire exchange.
-    ///
-    /// 使用已建立的服务器到客户端的会话密钥来加密应用数据。
-    ///
-    /// 对于在 `Established` 状态下发送的第一条消息，此方法还会对整个握手记录进行签名，
-    /// 并将签名包含在加密消息的头部。这向客户端证明服务器已成功完成握手，并为整个交换
-    /// 提供了抗篡改能力。
+    /// 当配置了签名方案时，加密数据并对握手记录进行签名。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
         let key = self
             .encryption_key
             .as_ref()
             .ok_or(HandshakeError::InvalidState)?;
 
-        // The transcript signature is calculated and included only once, typically with the first
-        // application data message from the server (often a "Finished" message).
-        // This signature covers all handshake messages, providing integrity for the entire negotiation.
-        //
-        // 握手记录签名只计算和包含一次，通常与服务器的第一条应用数据消息（通常是 "Finished" 消息）一起发送。
-        // 该签名覆盖所有握手消息，为整个协商过程提供完整性。
-        let (signature_algorithm, signed_transcript_hash, transcript_signature) =
-            if let Some(signer) = self.suite.signature() {
-                // Finalize the transcript hash.
-                let transcript_hash = self.transcript.current_hash();
+        // Sign the transcript.
+        let signer = self.suite.signature();
+        let transcript_hash = self.transcript.current_hash();
+        let signature = signer.sign(&transcript_hash, &self.signature_key_pair.private_key())?;
 
-                // Sign the hash with the server's long-term private key.
-                let signature =
-                    signer.sign(&transcript_hash, &self.signature_key_pair.private_key())?;
-
-                (
-                    Some(signer.algorithm()),
-                    Some(transcript_hash),
-                    Some(signature),
-                )
-            } else {
-                (None, None, None)
-            };
-
-        let aead = self.suite.aead();
-        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
-            // AAD (Additional Associated Data) is authenticated but not encrypted. Hashing it
-            // allows for arbitrary length AAD to be used without significant overhead.
-            //
-            // AAD（附加关联数据）经过身份验证但未加密。对其进行哈希处理
-            // 允许使用任意长度的 AAD 而不会产生显著开销。
-            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
-            // A unique nonce (or IV) must be used for each encryption with the same key.
-            // Using a random nonce is a safe and common practice.
-            //
-            // 对于使用相同密钥的每次加密，都必须使用唯一的 nonce（或 IV）。
-            // 使用随机 nonce 是一种安全且常见的做法。
-            .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
-            .build();
-
-        // The header contains parameters needed by the recipient for decryption.
-        // This includes cryptographic choices and the transcript signature for verification.
-        //
-        // 头部包含接收方解密所需的参数。
-        // 这包括密码学选择和用于验证的握手记录签名。
-        let kdf_params = KdfParams {
-            algorithm: self.suite.kdf().algorithm(),
-            salt: Some(b"seal-handshake-salt".to_vec()),
-            // The "info" context string ensures that client-to-server and server-to-client keys are different.
-            // "info" 上下文字符串确保客户端到服务器和服务器到客户端的密钥是不同的。
-            info: Some(b"seal-handshake-s2c".to_vec()), // s2c context
-        };
-        let header = EncryptedHeader {
-            params,
-            kem_algorithm: self.suite.kem().algorithm(),
-            kdf_params,
-            signature_algorithm,
-            signed_transcript_hash,
-            transcript_signature,
-        };
-
-        // Encrypt the plaintext using the established session key and the constructed header.
-        // The `seal-flow` library handles the details of AEAD encryption.
-        //
-        // 使用已建立的会话密钥和构造的头部来加密明文。
-        // `seal-flow` 库处理 AEAD 加密的细节。
-        EncryptionConfigurator::new(header, Cow::Borrowed(key), Some(aad.to_vec()))
-            .into_writer(Vec::new())?
-            .encrypt_ordinary_to_vec(plaintext)
-            .map_err(Into::into)
+        // Encrypt with the signature.
+        common_encrypt(
+            self,
+            plaintext,
+            aad,
+            key,
+            Some(signer.algorithm()),
+            Some(transcript_hash),
+            Some(signature.into()),
+        )
     }
+}
 
+impl HandshakeServer<Established, WithoutSignature> {
+    /// Encrypts data without signing when no signature scheme is configured.
+    ///
+    /// 当未配置签名方案时，加密数据而不进行签名。
+    pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+        let key = self
+            .encryption_key
+            .as_ref()
+            .ok_or(HandshakeError::InvalidState)?;
+
+        // Encrypt without a signature.
+        common_encrypt(self, plaintext, aad, key, None, None, None)
+    }
+}
+
+/// Helper function for the common encryption logic.
+///
+/// 用于通用加密逻辑的辅助函数。
+fn common_encrypt<Sig: SignaturePresence>(
+    server: &HandshakeServer<Established, Sig>,
+    plaintext: &[u8],
+    aad: &[u8],
+    key: &TypedAeadKey,
+    signature_algorithm: Option<SignatureAlgorithm>,
+    signed_transcript_hash: Option<Vec<u8>>,
+    transcript_signature: Option<SignatureWrapper>,
+) -> Result<Vec<u8>> {
+    let aead = server.suite.aead();
+    let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+        .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
+        .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
+        .build();
+
+    let kdf_params = KdfParams {
+        algorithm: server.suite.kdf().algorithm(),
+        salt: Some(b"seal-handshake-salt".to_vec()),
+        info: Some(b"seal-handshake-s2c".to_vec()),
+    };
+    let header = EncryptedHeader {
+        params,
+        kem_algorithm: server.suite.kem().algorithm(),
+        kdf_params,
+        signature_algorithm,
+        signed_transcript_hash,
+        transcript_signature,
+    };
+
+    EncryptionConfigurator::new(header, Cow::Borrowed(key), Some(aad.to_vec()))
+        .into_writer(Vec::new())?
+        .encrypt_ordinary_to_vec(plaintext)
+        .map_err(Into::into)
+}
+
+impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
     /// Decrypts application data from the client using the established client-to-server session key.
     ///
     /// This method is used to process secure data sent by the client after the handshake is complete.

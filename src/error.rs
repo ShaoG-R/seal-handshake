@@ -55,6 +55,9 @@ pub enum HandshakeError {
 
     #[error("a required cryptographic component was not configured in the protocol suite")]
     ComponentMissing,
+
+    #[error("an error occurred during the signing process")]
+    SigningError,
 }
 
 impl From<seal_flow::crypto::error::Error> for HandshakeError {

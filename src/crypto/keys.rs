@@ -10,7 +10,7 @@
 //! 它确保双方使用相同的参数派生出相同的会话密钥。
 
 use crate::error::Result;
-use crate::crypto::suite::ProtocolSuite;
+use crate::crypto::suite::{ProtocolSuite, SignaturePresence};
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::AeadAlgorithmTrait;
@@ -38,8 +38,8 @@ pub struct SessionKeys {
 /// 一个用于客户端到服务器的通信（"c2s"），另一个用于服务器到客户端的通信（"s2c"）。
 ///
 /// `is_client` 标志决定了哪个密钥用于加密，哪个用于解密。
-pub fn derive_session_keys(
-    suite: &ProtocolSuite,
+pub fn derive_session_keys<S: SignaturePresence>(
+    suite: &ProtocolSuite<S>,
     kem_secret: SharedSecret,
     agreement_secret: Option<SharedSecret>,
     is_client: bool,
