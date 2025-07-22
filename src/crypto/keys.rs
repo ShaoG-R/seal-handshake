@@ -47,9 +47,9 @@ pub fn derive_session_keys(
     // 1. Combine secrets: [agreement_secret || kem_secret]
     // 1. 合并密钥：[协商密钥 || KEM密钥]
     let final_shared_secret = if let Some(agreement_secret) = agreement_secret {
-        let mut combined = agreement_secret.to_vec();
+        let mut combined = agreement_secret;
         combined.extend_from_slice(kem_secret.as_ref());
-        SharedSecret(combined.into())
+        combined
     } else {
         kem_secret
     };
