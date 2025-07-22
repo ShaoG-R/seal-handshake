@@ -1,5 +1,5 @@
 use crate::bincode;
-use seal_flow::common::header::{SealFlowHeader, SymmetricParams};
+use seal_flow::common::header::{SealFlowHeader, AeadParams};
 use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
 use seal_flow::crypto::algorithms::asymmetric::signature::SignatureAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
@@ -42,7 +42,7 @@ pub enum HandshakeMessage {
 #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
 #[bincode(crate = "bincode")]
 pub struct EncryptedHeader {
-    pub params: SymmetricParams,
+    pub params: AeadParams,
     pub kem_algorithm: KemAlgorithm,
     pub kdf_params: KdfParams,
 
@@ -56,7 +56,7 @@ pub struct EncryptedHeader {
 }
 
 impl SealFlowHeader for EncryptedHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
+    fn aead_params(&self) -> &AeadParams {
         &self.params
     }
 
@@ -82,7 +82,7 @@ impl SealFlowHeader for EncryptedHeader {
                     return Err(seal_flow::Error::Format(seal_flow::error::FormatError::InvalidAlgorithm));
                 }
 
-                let verifier = sig_algo.into_signature_wrapper();
+                let verifier = sig_algo.into_wrapper();
                 verifier
                     .verify(hash, public_key, signature)
                     .map_err(|_| seal_flow::Error::Format(seal_flow::error::FormatError::InvalidSignature))

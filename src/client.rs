@@ -5,11 +5,11 @@ use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::state::{AwaitingKemPublicKey, Established, Ready};
 use crate::suite::ProtocolSuite;
-use seal_flow::common::header::SymmetricParamsBuilder;
+use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    KemAlgorithmTrait, SignatureAlgorithmTrait, SymmetricAlgorithmTrait,
+    KemAlgorithmTrait, SignatureAlgorithmTrait, AeadAlgorithmTrait,
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
@@ -48,8 +48,8 @@ pub struct HandshakeClient<S> {
     ///
     /// 用于加密（客户端到服务器）和解密（服务器到客户端）的派生密钥。
     /// 这些密钥在密钥交换后建立。
-    encryption_key: Option<TypedSymmetricKey>,
-    decryption_key: Option<TypedSymmetricKey>,
+    encryption_key: Option<TypedAeadKey>,
+    decryption_key: Option<TypedAeadKey>,
 }
 
 impl HandshakeClient<Ready> {
@@ -175,7 +175,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
 
         let aead = self.suite.aead();
         let kdf = self.suite.kdf();
-        let kem = kem_algorithm.into_asymmetric_wrapper();
+        let kem = kem_algorithm.into_wrapper();
 
         // KEM: Encapsulate a shared secret using the server's public key.
         // This generates a `shared_secret` (known only to the client for now)
@@ -223,7 +223,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         // DEM：使用派生的加密密钥和 `seal-flow` 加密初始负载。
         // 这演示了在密钥交换后立即安全地发送初始数据。
         let aad = aad.unwrap_or(b"seal-handshake-aad");
-        let params = SymmetricParamsBuilder::new(aead.algorithm(), 4096)
+        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
             .aad_hash(aad, Sha256::new())
             // A unique nonce is required for each encryption.
             // 每次加密都需要一个唯一的 nonce。
@@ -296,7 +296,7 @@ impl HandshakeClient<Established> {
             .ok_or(HandshakeError::InvalidState)?;
 
         let aead = self.suite.aead();
-        let params = SymmetricParamsBuilder::new(aead.algorithm(), 4096)
+        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
             .aad_hash(aad, Sha256::new())
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();

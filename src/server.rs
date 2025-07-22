@@ -5,11 +5,11 @@ use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::suite::ProtocolSuite;
 use crate::state::{AwaitingKeyExchange, Established, Ready};
-use seal_flow::common::header::SymmetricParamsBuilder;
+use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    KemAlgorithmTrait, SignatureAlgorithmTrait, SymmetricAlgorithmTrait,
+    KemAlgorithmTrait, SignatureAlgorithmTrait, AeadAlgorithmTrait,
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator, SealFlowHeader};
 use seal_flow::rand::rngs::OsRng;
@@ -55,11 +55,11 @@ pub struct HandshakeServer<S> {
     /// Derived key for encryption (server-to-client).
     ///
     /// 用于加密（服务器到客户端）的派生密钥。
-    encryption_key: Option<TypedSymmetricKey>,
+    encryption_key: Option<TypedAeadKey>,
     /// Derived key for decryption (client-to-server).
     ///
     /// 用于解密（客户端到服务器）的派生密钥。
-    decryption_key: Option<TypedSymmetricKey>,
+    decryption_key: Option<TypedAeadKey>,
 }
 
 
@@ -209,7 +209,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
 
         // KEM: Decapsulate the shared secret using the server's private key.
         // KEM：使用服务器的私钥解封装共享密钥。
-        let kem = header.kem_algorithm.into_asymmetric_wrapper();
+        let kem = header.kem_algorithm.into_wrapper();
         let shared_secret =
             kem.decapsulate_key(&kem_key_pair.private_key(), &encapsulated_key)?;
 
@@ -220,7 +220,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
             kdf_params.info.as_deref(), // Uses "c2s" info from client
-            header.symmetric_params().algorithm(),
+            header.aead_params().algorithm(),
         )?;
 
         // DEM: Decrypt the initial payload sent by the client.
@@ -234,7 +234,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
             Some(b"seal-handshake-s2c"), // "s2c" (server-to-client) info
-            header.symmetric_params().algorithm(),
+            header.aead_params().algorithm(),
         )?;
 
         // Transition to the `Established` state with the derived session keys.
@@ -285,7 +285,7 @@ impl HandshakeServer<Established> {
             };
 
         let aead = self.suite.aead();
-        let params = SymmetricParamsBuilder::new(aead.algorithm(), 4096)
+        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
             .aad_hash(aad, Sha256::new())
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();

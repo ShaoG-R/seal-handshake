@@ -8,7 +8,7 @@ use seal_handshake::suite::ProtocolSuite;
 use seal_flow::crypto::algorithms::{
     asymmetric::{kem::KemAlgorithm, signature::SignatureAlgorithm},
     kdf::key::KdfKeyAlgorithm,
-    symmetric::SymmetricAlgorithm,
+    aead::AeadAlgorithm,
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_handshake::message::HandshakeMessage;
@@ -20,11 +20,11 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
 
     let kem = KemAlgorithm::build().kyber1024();
     let signature_algorithm = SignatureAlgorithm::build().dilithium5();
-    let aead = SymmetricAlgorithm::build().aes256_gcm();
+    let aead = AeadAlgorithm::build().aes256_gcm();
     let kdf = KdfKeyAlgorithm::build().hkdf_sha256();
 
     let server_identity_key_pair = signature_algorithm
-        .into_signature_wrapper()
+        .into_wrapper()
         .generate_keypair()?;
     let server_identity_public_key = server_identity_key_pair.public_key().clone();
 
@@ -33,12 +33,12 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
 
     let suite = ProtocolSuite::builder()
         .with_algorithms(
-            kem.into_asymmetric_wrapper(),
-            Some(signature_algorithm.into_signature_wrapper()),
+            kem.into_wrapper(),
+            Some(signature_algorithm.into_wrapper()),
             None,
         )
-        .with_aead(aead.into_symmetric_wrapper())
-        .with_kdf(kdf.into_kdf_key_wrapper())
+        .with_aead(aead.into_wrapper())
+        .with_kdf(kdf.into_wrapper())
         .build();
 
     // --- 3. Server and Client Initialization ---

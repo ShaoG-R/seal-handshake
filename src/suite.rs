@@ -3,7 +3,7 @@ use seal_flow::crypto::wrappers::{
     asymmetric::key_agreement::KeyAgreementAlgorithmWrapper,
     asymmetric::signature::SignatureAlgorithmWrapper,
     kdf::key::KdfKeyWrapper,
-    symmetric::SymmetricAlgorithmWrapper,
+    aead::AeadAlgorithmWrapper,
 };
 
 // --- Final ProtocolSuite ---
@@ -12,7 +12,7 @@ pub struct ProtocolSuite {
     kem: KemAlgorithmWrapper,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
     signature: Option<SignatureAlgorithmWrapper>,
-    aead: SymmetricAlgorithmWrapper,
+    aead: AeadAlgorithmWrapper,
     kdf: KdfKeyWrapper,
 }
 
@@ -34,7 +34,7 @@ impl ProtocolSuite {
         &self.signature
     }
 
-    pub fn aead(&self) -> &SymmetricAlgorithmWrapper {
+    pub fn aead(&self) -> &AeadAlgorithmWrapper {
         &self.aead
     }
 
@@ -73,7 +73,7 @@ pub struct BuilderWithAlgorithms {
 
 impl BuilderWithAlgorithms {
     /// Sets the AEAD algorithm and moves to the next state.
-    pub fn with_aead(self, aead: SymmetricAlgorithmWrapper) -> BuilderWithAead {
+    pub fn with_aead(self, aead: AeadAlgorithmWrapper) -> BuilderWithAead {
         BuilderWithAead {
             kem: self.kem,
             signature: self.signature,
@@ -88,7 +88,7 @@ pub struct BuilderWithAead {
     kem: KemAlgorithmWrapper,
     signature: Option<SignatureAlgorithmWrapper>,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    aead: SymmetricAlgorithmWrapper,
+    aead: AeadAlgorithmWrapper,
 }
 
 impl BuilderWithAead {
@@ -109,7 +109,7 @@ pub struct ReadyToBuild {
     kem: KemAlgorithmWrapper,
     signature: Option<SignatureAlgorithmWrapper>,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    aead: SymmetricAlgorithmWrapper,
+    aead: AeadAlgorithmWrapper,
     kdf: KdfKeyWrapper,
 }
 
