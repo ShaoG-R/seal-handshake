@@ -46,6 +46,7 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, Sig> {
         let client_hello = HandshakeMessage::ClientHello {
             key_agreement_public_key,
             session_ticket: self.session_ticket_to_send.take(),
+            kem_algorithm: self.suite.kem().algorithm(),
         };
 
         // Update the transcript with the ClientHello message. The transcript must begin here

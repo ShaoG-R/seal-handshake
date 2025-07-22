@@ -1,5 +1,6 @@
 use crate::bincode;
 use seal_flow::common::header::{SealFlowHeader, AeadParams};
+use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
 use seal_flow::crypto::algorithms::asymmetric::signature::SignatureAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 use seal_flow::crypto::prelude::{
@@ -32,6 +33,7 @@ pub enum HandshakeMessage {
     ClientHello {
         key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
         session_ticket: Option<Vec<u8>>,
+        kem_algorithm: KemAlgorithm,
     },
 
     /// Server -> Client: Provides the server's public key and supported algorithms.

@@ -53,6 +53,9 @@ pub enum HandshakeError {
     #[error("received an unexpected or invalid message for the current state")]
     InvalidMessage,
 
+    #[error("invalid kem algorithm")]
+    InvalidKemAlgorithm,
+
     #[error("a required cryptographic component was not configured in the protocol suite")]
     ComponentMissing,
 

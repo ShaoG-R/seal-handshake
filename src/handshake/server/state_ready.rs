@@ -43,10 +43,13 @@ impl HandshakeServer<Ready, WithSignature> {
                 HandshakeMessage::ClientHello {
                     key_agreement_public_key,
                     session_ticket,
-                } => (
-                    key_agreement_public_key,
-                    self.try_decode_ticket(session_ticket)?,
-                ),
+                    kem_algorithm,
+                } => {
+                    if kem_algorithm != self.suite.kem().algorithm() {
+                        return Err(HandshakeError::InvalidKemAlgorithm);
+                    }
+                    (key_agreement_public_key, self.try_decode_ticket(session_ticket)?)
+                },
                 _ => return Err(HandshakeError::InvalidMessage),
             };
         
@@ -131,10 +134,13 @@ impl HandshakeServer<Ready, WithoutSignature> {
                 HandshakeMessage::ClientHello {
                     key_agreement_public_key,
                     session_ticket,
-                } => (
-                    key_agreement_public_key,
-                    self.try_decode_ticket(session_ticket)?,
-                ),
+                    kem_algorithm,
+                } => {
+                    if kem_algorithm != self.suite.kem().algorithm() {
+                        return Err(HandshakeError::InvalidKemAlgorithm);
+                    }
+                    (key_agreement_public_key, self.try_decode_ticket(session_ticket)?)
+                },
                 _ => return Err(HandshakeError::InvalidMessage),
             };
         
