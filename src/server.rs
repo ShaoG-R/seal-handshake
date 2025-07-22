@@ -106,21 +106,64 @@ pub struct HandshakeServer<State, Sig: SignaturePresence> {
     decryption_key: Option<TypedAeadKey>,
 }
 
+/// A builder for creating a `HandshakeServer`.
+///
+/// This builder ensures that all required fields are provided before constructing the server.
+///
+/// 用于创建 `HandshakeServer` 的构建器。
+///
+/// 此构建器确保在构造服务器之前提供了所有必需的字段。
+#[derive(Default)]
+pub struct HandshakeServerBuilder<Sig: SignaturePresence> {
+    suite: Option<ProtocolSuite<Sig>>,
+    signature_key_pair: Option<Sig::ServerKey>,
+}
 
-impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
-    /// Creates a new `HandshakeServer` in the `Ready` state.
-    ///
-    /// This is the entry point for initiating a server-side handshake.
-    /// It requires the server's long-term identity and the desired cryptographic algorithms.
-    /// The `signature_key_pair` is only required if the `ProtocolSuite` was built with a signature scheme.
-    ///
-    /// 在 `Ready` 状态下创建一个新的 `HandshakeServer`。
-    ///
-    /// 这是发起服务器端握手的入口点。
-    /// 它需要服务器的长期身份和期望的密码学算法。
-    /// 仅当 `ProtocolSuite` 配置了签名方案时，才需要 `signature_key_pair`。
-    pub fn new(suite: ProtocolSuite<Sig>, signature_key_pair: Sig::ServerKey) -> Self {
+impl<Sig: SignaturePresence> HandshakeServerBuilder<Sig> {
+    /// Creates a new `HandshakeServerBuilder`.
+    pub fn new() -> Self {
         Self {
+            suite: None,
+            signature_key_pair: None,
+        }
+    }
+
+    /// Sets the protocol suite for the handshake.
+    ///
+    /// 设置握手所用的协议套件。
+    pub fn suite(mut self, suite: ProtocolSuite<Sig>) -> Self {
+        self.suite = Some(suite);
+        self
+    }
+
+    /// Sets the server's long-term identity key pair for signing.
+    ///
+    /// This is required to authenticate the server.
+    ///
+    /// 设置用于签名的服务器长期身份密钥对。
+    ///
+    /// 这是验证服务器身份所必需的。
+    pub fn signature_key_pair(mut self, key_pair: Sig::ServerKey) -> Self {
+        self.signature_key_pair = Some(key_pair);
+        self
+    }
+
+    /// Builds the `HandshakeServer`.
+    ///
+    /// Returns an error if any required fields are missing.
+    ///
+    /// 构建 `HandshakeServer`。
+    ///
+    /// 如果任何必需字段缺失，则返回错误。
+    pub fn build(self) -> Result<HandshakeServer<Ready, Sig>> {
+        let suite = self
+            .suite
+            .ok_or(HandshakeError::BuilderMissingField("suite"))?;
+        let signature_key_pair = self.signature_key_pair.ok_or(
+            HandshakeError::BuilderMissingField("signature_key_pair"),
+        )?;
+
+        Ok(HandshakeServer {
             state: PhantomData,
             suite,
             transcript: Transcript::new(),
@@ -130,7 +173,17 @@ impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
             agreement_shared_secret: None,
             encryption_key: None,
             decryption_key: None,
-        }
+        })
+    }
+}
+
+
+impl<Sig: SignaturePresence> HandshakeServer<Ready, Sig> {
+    /// Creates a new `HandshakeServerBuilder` to construct a `HandshakeServer`.
+    ///
+    /// 在 `Ready` 状态下创建一个新的 `HandshakeServer` 的构建器。
+    pub fn builder() -> HandshakeServerBuilder<Sig> {
+        HandshakeServerBuilder::new()
     }
 }
 

@@ -41,8 +41,14 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     // --- 3. Server and Client Initialization ---
     println!("--- Initializing server and client ---");
 
-    let server = HandshakeServer::new(suite.clone(), server_identity_key_pair);
-    let client = HandshakeClient::new(suite, server_identity_public_key);
+    let server = HandshakeServer::builder()
+        .suite(suite.clone())
+        .signature_key_pair(server_identity_key_pair)
+        .build()?;
+    let client = HandshakeClient::builder()
+        .suite(suite)
+        .server_signature_public_key(server_identity_public_key)
+        .build()?;
 
     // --- 4. Handshake ---
     println!("--- Starting handshake ---");
@@ -132,8 +138,14 @@ fn test_kem_only_handshake() -> Result<()> {
     // --- 3. Server and Client Initialization (No Keys) ---
     println!("--- Initializing server and client without signature keys ---");
 
-    let server = HandshakeServer::new(suite.clone(), ());
-    let client = HandshakeClient::new(suite, ());
+    let server = HandshakeServer::builder()
+        .suite(suite.clone())
+        .signature_key_pair(())
+        .build()?;
+    let client = HandshakeClient::builder()
+        .suite(suite)
+        .server_signature_public_key(())
+        .build()?;
 
     // --- 4. Handshake ---
     println!("--- Starting KEM-only handshake ---");

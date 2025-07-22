@@ -58,6 +58,9 @@ pub enum HandshakeError {
 
     #[error("an error occurred during the signing process")]
     SigningError,
+
+    #[error("builder is missing required field: {0}")]
+    BuilderMissingField(&'static str),
 }
 
 impl From<seal_flow::crypto::error::Error> for HandshakeError {
