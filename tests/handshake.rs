@@ -30,7 +30,8 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     println!("--- Initializing protocol suite ---");
 
     let suite = ProtocolSuiteBuilder::new()
-        .with_kem(kem.into_wrapper(), None)
+        .with_kem(kem.into_wrapper())
+        .without_key_agreement()
         .with_signature(signature_algorithm.into_wrapper())
         .with_aead(aead.into_wrapper())
         .with_kdf(kdf.into_wrapper())
@@ -127,7 +128,8 @@ fn test_kem_only_handshake() -> Result<()> {
     println!("--- Initializing KEM-only protocol suite ---");
 
     let suite = ProtocolSuiteBuilder::new()
-        .with_kem(kem.into_wrapper(), None)
+        .with_kem(kem.into_wrapper())
+        .without_key_agreement()
         .without_signature()
         .with_aead(aead.into_wrapper())
         .with_kdf(kdf.into_wrapper())
@@ -230,7 +232,8 @@ fn test_handshake_with_resumption() -> Result<()> {
     let ticket_encryption_key = aead.clone().into_wrapper().generate_typed_key()?;
 
     let suite = ProtocolSuiteBuilder::new()
-        .with_kem(kem.into_wrapper(), None)
+        .with_kem(kem.into_wrapper())
+        .without_key_agreement()
         .with_signature(signature_algorithm.into_wrapper())
         .with_aead(aead.into_wrapper())
         .with_kdf(kdf.into_wrapper())

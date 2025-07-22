@@ -1,14 +1,19 @@
 use super::{AwaitingKeyExchange, Established, HandshakeServer, SignaturePresence};
-use crate::crypto::keys::{SessionKeysAndMaster, derive_session_keys};
-use crate::error::{HandshakeError, Result};
-use crate::protocol::message::{EncryptedHeader, HandshakeMessage};
+use crate::{
+    crypto::{
+        keys::{derive_session_keys, SessionKeysAndMaster},
+        suite::KeyAgreementPresence,
+    },
+    error::{HandshakeError, Result},
+    protocol::message::{EncryptedHeader, HandshakeMessage},
+};
 use seal_flow::{
     crypto::{prelude::*, traits::KemAlgorithmTrait},
     prelude::{PendingDecryption, prepare_decryption_from_slice},
 };
 use std::{borrow::Cow, marker::PhantomData};
 
-impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<AwaitingKeyExchange, Sig, Ka> {
     /// Processes a `ClientKeyExchange` message.
     ///
     /// This method performs the core server-side key exchange:
@@ -30,7 +35,7 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
         mut self,
         message: HandshakeMessage,
         aad: &[u8],
-    ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig>)> {
+    ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig, Ka>)> {
         self.transcript.update(&message);
 
         let (encrypted_message, encapsulated_key) = extract_client_key_exchange(&message)?;
@@ -80,8 +85,8 @@ fn extract_client_key_exchange(message: &HandshakeMessage) -> Result<(Vec<u8>, E
 }
 
 /// Derives session keys from the client's key exchange data.
-fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
-    server: &HandshakeServer<AwaitingKeyExchange, Sig>,
+fn derive_session_keys_from_client_exchange<Sig: SignaturePresence, Ka: KeyAgreementPresence>(
+    server: &HandshakeServer<AwaitingKeyExchange, Sig, Ka>,
     kem_key_pair: &TypedKemKeyPair,
     encapsulated_key: &EncapsulatedKey,
 ) -> Result<SessionKeysAndMaster> {

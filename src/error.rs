@@ -55,6 +55,9 @@ pub enum HandshakeError {
     #[error("invalid kem algorithm")]
     InvalidKemAlgorithm,
 
+    #[error("the server did not provide a public key for key agreement when it was required")]
+    MissingKeyAgreementPublicKey,
+
     #[error("a required cryptographic component was not configured in the protocol suite")]
     ComponentMissing,
 

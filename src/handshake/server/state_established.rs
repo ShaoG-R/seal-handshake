@@ -1,6 +1,6 @@
 use super::{Established, HandshakeServer, SignaturePresence};
 use crate::bincode;
-use crate::crypto::suite::{WithSignature, WithoutSignature};
+use crate::crypto::suite::{KeyAgreementPresence, WithSignature, WithoutSignature};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use seal_flow::{
@@ -21,7 +21,7 @@ use std::{
 
 // --- `encrypt` and `decrypt` implementations ---
 
-impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<Established, Sig, Ka> {
     /// Issues a new session ticket for the client to use for resumption.
     ///
     /// This method can only be called after the handshake is established. It encrypts
@@ -87,7 +87,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
     }
 }
 
-impl HandshakeServer<Established, WithSignature> {
+impl<Ka: KeyAgreementPresence> HandshakeServer<Established, WithSignature, Ka> {
     /// Encrypts data and signs the transcript when a signature scheme is configured.
     ///
     /// 当配置了签名方案时，加密数据并对握手记录进行签名。
@@ -115,7 +115,7 @@ impl HandshakeServer<Established, WithSignature> {
     }
 }
 
-impl HandshakeServer<Established, WithoutSignature> {
+impl<Ka: KeyAgreementPresence> HandshakeServer<Established, WithoutSignature, Ka> {
     /// Encrypts data without signing when no signature scheme is configured.
     ///
     /// 当未配置签名方案时，加密数据而不进行签名。
@@ -133,8 +133,8 @@ impl HandshakeServer<Established, WithoutSignature> {
 /// Helper function for the common encryption logic.
 ///
 /// 用于通用加密逻辑的辅助函数。
-fn common_encrypt<Sig: SignaturePresence>(
-    server: &HandshakeServer<Established, Sig>,
+fn common_encrypt<Sig: SignaturePresence, Ka: KeyAgreementPresence>(
+    server: &HandshakeServer<Established, Sig, Ka>,
     plaintext: &[u8],
     aad: &[u8],
     key: &TypedAeadKey,
@@ -167,7 +167,7 @@ fn common_encrypt<Sig: SignaturePresence>(
         .map_err(Into::into)
 }
 
-impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<Established, Sig, Ka> {
     /// Decrypts application data from the client using the established client-to-server session key.
     ///
     /// This method is used to process secure data sent by the client after the handshake is complete.

@@ -9,7 +9,7 @@
 //! 该模块集中了客户端和服务器在初始密钥交换完成后使用的密钥派生逻辑（KDF）。
 //! 它确保双方使用相同的参数派生出相同的会话密钥。
 
-use crate::crypto::suite::{ProtocolSuite, SignaturePresence};
+use crate::crypto::suite::{KeyAgreementPresence, ProtocolSuite, SignaturePresence};
 use crate::error::Result;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
@@ -33,8 +33,8 @@ pub struct SessionKeysAndMaster {
 ///
 /// 它将当前握手的密钥与一个可选的恢复密钥结合起来
 /// 以生成一个新的主密钥，然后用该主密钥派生会话密钥。
-pub fn derive_session_keys<S: SignaturePresence>(
-    suite: &ProtocolSuite<S>,
+pub fn derive_session_keys<S: SignaturePresence, K: KeyAgreementPresence>(
+    suite: &ProtocolSuite<S, K>,
     kem_secret: SharedSecret,
     agreement_secret: Option<SharedSecret>,
     resumption_master_secret: Option<SharedSecret>,

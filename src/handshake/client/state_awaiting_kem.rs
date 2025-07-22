@@ -2,12 +2,16 @@ use super::{
     AwaitingKemPublicKey, EncapsulatedKey, Established, HandshakeClient, SessionKeysAndMaster,
     SignaturePresence, WithSignature, WithoutSignature,
 };
-use crate::crypto::keys::derive_session_keys;
-use crate::crypto::signature::verify_ephemeral_keys;
-use crate::error::{HandshakeError, Result};
-use crate::protocol::{
-    message::{EncryptedHeader, HandshakeMessage, KdfParams},
-    transcript::Transcript,
+use crate::{
+    crypto::{
+        keys::derive_session_keys,
+        suite::{KeyAgreementPresence, WithKeyAgreement, WithoutKeyAgreement},
+    },
+    error::{HandshakeError, Result},
+    protocol::{
+        message::{EncryptedHeader, HandshakeMessage, KdfParams},
+        transcript::Transcript,
+    },
 };
 use seal_flow::{
     common::header::AeadParamsBuilder,
@@ -21,30 +25,36 @@ use seal_flow::{
 };
 use std::{borrow::Cow, marker::PhantomData};
 
-impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
-    /// Processes `ServerHello` for a suite with a signature scheme.
-    ///
-    /// It verifies the server's signature on its ephemeral keys before proceeding.
-    ///
-    /// 为带有签名方案的套件处理 `ServerHello`。
-    ///
-    /// 在继续之前，它会验证服务器对其临时密钥的签名。
-    pub fn process_server_hello(
+/// A trait to encapsulate state-specific operations for the `AwaitingKemPublicKey` state.
+pub trait AwaitingKemStateOperations<Sig: SignaturePresence, Ka: KeyAgreementPresence> {
+    fn process_server_hello(
+        self,
+        message: HandshakeMessage,
+        initial_payload: Option<&[u8]>,
+        aad: Option<&[u8]>,
+    ) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig, Ka>)>;
+}
+
+impl<Ka: KeyAgreementPresence> AwaitingKemStateOperations<WithSignature, Ka>
+    for HandshakeClient<AwaitingKemPublicKey, WithSignature, Ka>
+where
+    Self: DeriveKeys<Sig = WithSignature, Ka = Ka>,
+{
+    fn process_server_hello(
         mut self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
         aad: Option<&[u8]>,
     ) -> Result<(
         HandshakeMessage,
-        HandshakeClient<Established, WithSignature>,
+        HandshakeClient<Established, WithSignature, Ka>,
     )> {
         let (server_kem_pk, server_key_agreement_pk, signature) =
             common_server_hello_processing(&mut self.transcript, &message)?;
 
-        // Verify the signature.
         let verifier = self.suite.signature();
         let sig_to_verify = signature.ok_or(HandshakeError::InvalidSignature)?;
-        verify_ephemeral_keys(
+        crate::crypto::signature::verify_ephemeral_keys(
             verifier,
             &server_kem_pk,
             &server_key_agreement_pk,
@@ -52,7 +62,6 @@ impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
             &self.server_signature_public_key,
         )?;
 
-        // Delegate to the common logic for key derivation and message creation.
         complete_server_hello_processing(
             self,
             server_kem_pk,
@@ -63,27 +72,23 @@ impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
     }
 }
 
-impl HandshakeClient<AwaitingKemPublicKey, WithoutSignature> {
-    /// Processes `ServerHello` for a suite without a signature scheme.
-    ///
-    /// Skips signature verification.
-    ///
-    /// 为不带签名方案的套件处理 `ServerHello`。
-    ///
-    /// 跳过签名验证。
-    pub fn process_server_hello(
+impl<Ka: KeyAgreementPresence> AwaitingKemStateOperations<WithoutSignature, Ka>
+    for HandshakeClient<AwaitingKemPublicKey, WithoutSignature, Ka>
+where
+    Self: DeriveKeys<Sig = WithoutSignature, Ka = Ka>,
+{
+    fn process_server_hello(
         mut self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
         aad: Option<&[u8]>,
     ) -> Result<(
         HandshakeMessage,
-        HandshakeClient<Established, WithoutSignature>,
+        HandshakeClient<Established, WithoutSignature, Ka>,
     )> {
         let (server_kem_pk, server_key_agreement_pk, _) =
             common_server_hello_processing(&mut self.transcript, &message)?;
 
-        // Delegate to the common logic for key derivation and message creation.
         complete_server_hello_processing(
             self,
             server_kem_pk,
@@ -93,6 +98,22 @@ impl HandshakeClient<AwaitingKemPublicKey, WithoutSignature> {
         )
     }
 }
+
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence>
+    HandshakeClient<AwaitingKemPublicKey, Sig, Ka>
+where
+    Self: AwaitingKemStateOperations<Sig, Ka>,
+{
+    pub fn process_server_hello(
+        self,
+        message: HandshakeMessage,
+        initial_payload: Option<&[u8]>,
+        aad: Option<&[u8]>,
+    ) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig, Ka>)> {
+        AwaitingKemStateOperations::process_server_hello(self, message, initial_payload, aad)
+    }
+}
+
 
 /// Parses the ServerHello and updates the transcript.
 ///
@@ -126,16 +147,23 @@ fn common_server_hello_processing(
 ///
 /// 在 `ServerHello` 处理完毕后完成握手逻辑。
 /// 这包括密钥派生、初始有效载荷的加密以及状态转换。
-fn complete_server_hello_processing<Sig: SignaturePresence>(
-    mut client: HandshakeClient<AwaitingKemPublicKey, Sig>,
+fn complete_server_hello_processing<Sig: SignaturePresence, Ka: KeyAgreementPresence>(
+    mut client: HandshakeClient<AwaitingKemPublicKey, Sig, Ka>,
     server_kem_pk: TypedKemPublicKey,
     server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
     initial_payload: Option<&[u8]>,
     aad: Option<&[u8]>,
-) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig>)> {
+) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig, Ka>)>
+where
+    HandshakeClient<AwaitingKemPublicKey, Sig, Ka>: DeriveKeys<Sig = Sig, Ka = Ka>,
+{
     // --- Key Derivation ---
     let (session_keys, encapsulated_key) =
-        derive_session_keys_from_server_hello(&client, server_kem_pk, server_key_agreement_pk)?;
+        <HandshakeClient<AwaitingKemPublicKey, Sig, Ka> as DeriveKeys>::derive_session_keys(
+            &client,
+            server_kem_pk,
+            server_key_agreement_pk,
+        )?;
 
     // --- Create ClientKeyExchange ---
     let key_exchange_msg = create_client_key_exchange(
@@ -166,42 +194,79 @@ fn complete_server_hello_processing<Sig: SignaturePresence>(
     Ok((key_exchange_msg, established_client))
 }
 
-/// Derives session keys based on the server's hello message and the client's state.
-fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
-    client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
-    server_kem_pk: TypedKemPublicKey,
-    server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
-) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
-    let kem = client.suite.kem();
+/// A trait for deriving session keys, specialized by key agreement presence.
+pub trait DeriveKeys {
+    type Sig: SignaturePresence;
+    type Ka: KeyAgreementPresence;
 
-    // KEM: Encapsulate a new shared secret against the server's public KEM key.
-    let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
+    fn derive_session_keys(
+        client: &HandshakeClient<AwaitingKemPublicKey, Self::Sig, Self::Ka>,
+        server_kem_pk: TypedKemPublicKey,
+        server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
+    ) -> Result<(SessionKeysAndMaster, EncapsulatedKey)>;
+}
 
-    // Key Agreement: If negotiated, compute the shared secret.
-    let shared_secret_agreement = if let (Some(engine), Some(server_pk)) = (
-        client.key_agreement_engine.as_ref(),
-        &server_key_agreement_pk,
-    ) {
-        Some(engine.agree(server_pk)?)
-    } else {
-        None
-    };
+impl<Sig: SignaturePresence> DeriveKeys for HandshakeClient<AwaitingKemPublicKey, Sig, WithKeyAgreement> {
+    type Sig = Sig;
+    type Ka = WithKeyAgreement;
 
-    // KDF: Derive session keys.
-    let session_keys = derive_session_keys(
-        &client.suite,
-        shared_secret_kem,
-        shared_secret_agreement,
-        client.resumption_master_secret.clone(), // Use the resumption secret
-        true,                                    // is_client = true
-    )?;
+    fn derive_session_keys(
+        client: &HandshakeClient<AwaitingKemPublicKey, Sig, WithKeyAgreement>,
+        server_kem_pk: TypedKemPublicKey,
+        server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
+    ) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
+        let kem = client.suite.kem();
+        let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
 
-    Ok((session_keys, encapsulated_key))
+        let server_pk =
+            server_key_agreement_pk.ok_or(HandshakeError::MissingKeyAgreementPublicKey)?;
+        let shared_secret_agreement = client
+            .key_agreement_engine
+            .as_ref()
+            .unwrap()
+            .agree(&server_pk)?;
+
+        let session_keys = derive_session_keys(
+            &client.suite,
+            shared_secret_kem,
+            Some(shared_secret_agreement),
+            client.resumption_master_secret.clone(),
+            true,
+        )?;
+
+        Ok((session_keys, encapsulated_key))
+    }
+}
+
+impl<Sig: SignaturePresence> DeriveKeys
+    for HandshakeClient<AwaitingKemPublicKey, Sig, WithoutKeyAgreement>
+{
+    type Sig = Sig;
+    type Ka = WithoutKeyAgreement;
+
+    fn derive_session_keys(
+        client: &HandshakeClient<AwaitingKemPublicKey, Sig, WithoutKeyAgreement>,
+        server_kem_pk: TypedKemPublicKey,
+        _server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
+    ) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
+        let kem = client.suite.kem();
+        let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
+
+        let session_keys = derive_session_keys(
+            &client.suite,
+            shared_secret_kem,
+            None,
+            client.resumption_master_secret.clone(),
+            true,
+        )?;
+
+        Ok((session_keys, encapsulated_key))
+    }
 }
 
 /// Creates the `ClientKeyExchange` message, encrypting the initial payload.
-fn create_client_key_exchange<Sig: SignaturePresence>(
-    client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
+fn create_client_key_exchange<Sig: SignaturePresence, Ka: KeyAgreementPresence>(
+    client: &HandshakeClient<AwaitingKemPublicKey, Sig, Ka>,
     encryption_key: &TypedAeadKey,
     encapsulated_key: EncapsulatedKey,
     initial_payload: Option<&[u8]>,

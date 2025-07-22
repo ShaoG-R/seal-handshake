@@ -1,4 +1,5 @@
 use super::{HandshakeClient, ProtocolSuite, Ready, SignaturePresence};
+use crate::crypto::suite::KeyAgreementPresence;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use std::marker::PhantomData;
 
@@ -14,15 +15,19 @@ pub struct Missing;
 /// 用于创建 `HandshakeClient` 的构建器。
 ///
 /// 此构建器确保在构造客户端之前提供了所有必需的字段。
-pub struct HandshakeClientBuilder<Suite, ServerKey, Sig: SignaturePresence> {
+pub struct HandshakeClientBuilder<Suite, ServerKey, Sig: SignaturePresence, Ka: KeyAgreementPresence>
+{
     suite: Suite,
     server_signature_public_key: ServerKey,
     resumption_master_secret: Option<SharedSecret>,
     session_ticket: Option<Vec<u8>>,
     _sig: PhantomData<Sig>,
+    _ka: PhantomData<Ka>,
 }
 
-impl<Sig: SignaturePresence> HandshakeClientBuilder<Missing, Missing, Sig> {
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence>
+    HandshakeClientBuilder<Missing, Missing, Sig, Ka>
+{
     /// Creates a new `HandshakeClientBuilder`.
     pub fn new() -> Self {
         Self {
@@ -31,24 +36,28 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<Missing, Missing, Sig> {
             resumption_master_secret: None,
             session_ticket: None,
             _sig: PhantomData,
+            _ka: PhantomData,
         }
     }
 }
 
-impl<S, K, Sig: SignaturePresence> HandshakeClientBuilder<S, K, Sig> {
+impl<S, K, Sig: SignaturePresence, Ka: KeyAgreementPresence>
+    HandshakeClientBuilder<S, K, Sig, Ka>
+{
     /// Sets the protocol suite for the handshake.
     ///
     /// 设置握手所用的协议套件。
     pub fn suite(
         self,
-        suite: ProtocolSuite<Sig>,
-    ) -> HandshakeClientBuilder<ProtocolSuite<Sig>, K, Sig> {
+        suite: ProtocolSuite<Sig, Ka>,
+    ) -> HandshakeClientBuilder<ProtocolSuite<Sig, Ka>, K, Sig, Ka> {
         HandshakeClientBuilder {
             suite,
             server_signature_public_key: self.server_signature_public_key,
             resumption_master_secret: self.resumption_master_secret,
             session_ticket: self.session_ticket,
             _sig: PhantomData,
+            _ka: PhantomData,
         }
     }
 
@@ -62,13 +71,14 @@ impl<S, K, Sig: SignaturePresence> HandshakeClientBuilder<S, K, Sig> {
     pub fn server_signature_public_key(
         self,
         key: Sig::ClientKey,
-    ) -> HandshakeClientBuilder<S, Sig::ClientKey, Sig> {
+    ) -> HandshakeClientBuilder<S, Sig::ClientKey, Sig, Ka> {
         HandshakeClientBuilder {
             suite: self.suite,
             server_signature_public_key: key,
             resumption_master_secret: self.resumption_master_secret,
             session_ticket: self.session_ticket,
             _sig: PhantomData,
+            _ka: PhantomData,
         }
     }
 
@@ -83,7 +93,9 @@ impl<S, K, Sig: SignaturePresence> HandshakeClientBuilder<S, K, Sig> {
     }
 }
 
-impl<Sig: SignaturePresence> HandshakeClientBuilder<ProtocolSuite<Sig>, Sig::ClientKey, Sig> {
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence>
+    HandshakeClientBuilder<ProtocolSuite<Sig, Ka>, Sig::ClientKey, Sig, Ka>
+{
     /// Builds the `HandshakeClient`.
     ///
     /// This method is only available when all required fields have been provided.
@@ -91,7 +103,7 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<ProtocolSuite<Sig>, Sig::Cli
     /// 构建 `HandshakeClient`。
     ///
     /// 此方法仅在提供了所有必需字段时可用。
-    pub fn build(self) -> HandshakeClient<Ready, Sig> {
+    pub fn build(self) -> HandshakeClient<Ready, Sig, Ka> {
         HandshakeClient {
             state: PhantomData,
             suite: self.suite,

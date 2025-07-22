@@ -1,6 +1,9 @@
 use super::{Established, HandshakeClient, SignaturePresence, WithSignature, WithoutSignature};
-use crate::error::{HandshakeError, Result};
-use crate::protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams};
+use crate::{
+    crypto::suite::KeyAgreementPresence,
+    error::{HandshakeError, Result},
+    protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams},
+};
 use seal_flow::{
     common::header::AeadParamsBuilder,
     crypto::{keys::asymmetric::kem::SharedSecret, prelude::*, traits::AeadAlgorithmTrait},
@@ -9,7 +12,7 @@ use seal_flow::{
 };
 use std::borrow::Cow;
 
-impl<Sig: SignaturePresence> HandshakeClient<Established, Sig> {
+impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeClient<Established, Sig, Ka> {
     /// Encrypts application data using the established client-to-server session key.
     ///
     /// This method is used for sending secure data after the handshake has successfully completed.
@@ -99,7 +102,7 @@ impl<Sig: SignaturePresence> HandshakeClient<Established, Sig> {
     }
 }
 
-impl HandshakeClient<Established, WithSignature> {
+impl<Ka: KeyAgreementPresence> HandshakeClient<Established, WithSignature, Ka> {
     /// Decrypts a message from the server and verifies the handshake transcript signature.
     ///
     /// This method is specific to suites `WithSignature`.
@@ -133,7 +136,7 @@ impl HandshakeClient<Established, WithSignature> {
     }
 }
 
-impl HandshakeClient<Established, WithoutSignature> {
+impl<Ka: KeyAgreementPresence> HandshakeClient<Established, WithoutSignature, Ka> {
     /// Decrypts a message from the server.
     ///
     /// This method is specific to suites `WithoutSignature` and does not perform transcript verification.

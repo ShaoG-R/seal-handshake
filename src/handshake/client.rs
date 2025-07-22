@@ -4,7 +4,8 @@
 use crate::crypto::{
     keys::SessionKeysAndMaster,
     suite::{
-        KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature, WithoutSignature,
+        KeyAgreementEngine, KeyAgreementPresence, ProtocolSuite, SignaturePresence, WithSignature,
+        WithoutSignature,
     },
 };
 use crate::protocol::{
@@ -33,7 +34,7 @@ pub use builder::HandshakeClientBuilder;
 /// 通过泛型状态 `S` 在编译时强制执行协议流程。
 /// 这可以防止乱序操作，例如在密钥建立之前尝试加密数据。
 #[derive(Debug)]
-pub struct HandshakeClient<State, Sig: SignaturePresence> {
+pub struct HandshakeClient<State, Sig: SignaturePresence, Ka: KeyAgreementPresence> {
     /// Zero-sized marker to hold the current state `S`.
     ///
     /// 零大小标记，用于持有当前状态 `S`。
@@ -41,7 +42,7 @@ pub struct HandshakeClient<State, Sig: SignaturePresence> {
     /// The cryptographic suite used for the handshake.
     ///
     /// 握手过程中使用的密码套件。
-    suite: ProtocolSuite<Sig>,
+    suite: ProtocolSuite<Sig, Ka>,
     /// A running hash of the handshake transcript for integrity checks.
     /// This ensures that the messages negotiated are the same ones the server signs.
     ///

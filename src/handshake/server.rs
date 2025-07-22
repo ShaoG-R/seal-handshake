@@ -1,7 +1,7 @@
 //! Implements the server-side of the handshake protocol state machine.
 //! 实现握手协议状态机的服务器端。
 
-use crate::crypto::suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence};
+use crate::crypto::suite::{KeyAgreementEngine, KeyAgreementPresence, ProtocolSuite, SignaturePresence};
 use crate::protocol::{
     state::{AwaitingKeyExchange, Established, Ready},
     transcript::Transcript,
@@ -34,7 +34,7 @@ use seal_flow::crypto::{
 /// 通过泛型状态 `S` 在编译时强制执行协议流程。
 /// 这确保了方法只能按正确的顺序调用，防止了协议实现中的逻辑错误。
 #[derive(Debug)]
-pub struct HandshakeServer<State, Sig: SignaturePresence> {
+pub struct HandshakeServer<State, Sig: SignaturePresence, Ka: KeyAgreementPresence> {
     /// Zero-sized marker to hold the current state `S`.
     /// This doesn't take up space but allows the type system to track the machine's state.
     ///
@@ -46,7 +46,7 @@ pub struct HandshakeServer<State, Sig: SignaturePresence> {
     ///
     /// 握手过程中使用的密码套件。
     /// 这定义了要使用的算法集（KEM、AEAD、KDF 等）。
-    suite: ProtocolSuite<Sig>,
+    suite: ProtocolSuite<Sig, Ka>,
     /// A running hash of the handshake transcript for integrity checks.
     /// It accumulates all messages exchanged, and its final hash is signed by the server.
     ///
