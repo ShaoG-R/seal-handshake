@@ -5,12 +5,13 @@ use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::state::{AwaitingKemPublicKey, Established, Ready};
 use crate::suite::{KeyAgreementEngine, ProtocolSuite};
+use crate::transcript::Transcript;
 use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::bincode;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    AeadAlgorithmTrait, KemAlgorithmTrait, KeyAgreementAlgorithmTrait, SignatureAlgorithmTrait,
+    AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait,
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator};
 use seal_flow::rand::rngs::OsRng;
@@ -39,7 +40,7 @@ pub struct HandshakeClient<S> {
     /// A running hash of the handshake transcript for integrity checks.
     ///
     /// 用于完整性检查的握手记录的运行哈希。
-    transcript_hasher: Sha256,
+    transcript: Transcript,
     /// The client's ephemeral key agreement key pair, if used.
     key_agreement_engine: Option<KeyAgreementEngine>,
     /// The server's long-term public key for verifying signatures.
@@ -70,7 +71,7 @@ impl HandshakeClient<Ready> {
         Self {
             state: PhantomData,
             suite,
-            transcript_hasher: Sha256::new(),
+            transcript: Transcript::new(),
             key_agreement_engine: None,
             server_signature_public_key,
             encryption_key: None,
@@ -90,13 +91,8 @@ impl HandshakeClient<Ready> {
         // If a key agreement algorithm is specified, generate a key pair for it.
         let (key_agreement_public_key, key_agreement_engine) =
             if let Some(key_agreement) = self.suite.key_agreement() {
-                let key_pair = key_agreement.generate_keypair().unwrap();
-                let public_key = key_pair.public_key().clone();
-                let engine = KeyAgreementEngine {
-                    key_pair,
-                    wrapper: key_agreement.clone(),
-                };
-                (Some(public_key), Some(engine))
+                let engine = KeyAgreementEngine::new_for_client(key_agreement).unwrap();
+                (Some(engine.public_key().clone()), Some(engine))
             } else {
                 (None, None)
             };
@@ -107,14 +103,12 @@ impl HandshakeClient<Ready> {
 
         // Update the transcript with the ClientHello message.
         // 使用 ClientHello 消息更新握手记录。
-        let client_hello_bytes =
-            bincode::encode_to_vec(&client_hello, bincode::config::standard()).unwrap();
-        self.transcript_hasher.update(&client_hello_bytes);
+        self.transcript.update(&client_hello);
 
         let next_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
-            transcript_hasher: self.transcript_hasher,
+            transcript: self.transcript,
             key_agreement_engine,
             server_signature_public_key: self.server_signature_public_key,
             encryption_key: None,
@@ -151,9 +145,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
     ) -> Result<(HandshakeMessage, HandshakeClient<Established>)> {
         // Update the transcript with the ServerHello message before processing it.
         // 在处理 ServerHello 消息之前，先用它更新握手记录。
-        let server_hello_bytes =
-            bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
-        self.transcript_hasher.update(&server_hello_bytes);
+        self.transcript.update(&message);
 
         // Extract the server's public key and KEM algorithm from the message.
         // 从消息中提取服务器的公钥和 KEM 算法。
@@ -175,7 +167,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         };
 
         // Verify the signature of the ephemeral keys, if provided.
-        if let Some(signature) = signature {
+        if let (Some(signature), Some(verifier)) = (signature, self.suite.signature()) {
             let data_to_verify = {
                 let kem_pk_bytes =
                     bincode::encode_to_vec(&server_kem_pk, bincode::config::standard())
@@ -194,17 +186,13 @@ impl HandshakeClient<AwaitingKemPublicKey> {
                 }
             };
 
-            if let Some(verifier) = self.suite.signature() {
-                verifier
-                    .verify(
-                        &data_to_verify,
-                        &self.server_signature_public_key,
-                        &signature,
-                    )
-                    .map_err(|_| HandshakeError::InvalidSignature)?;
-            } else {
-                return Err(HandshakeError::InvalidSignature);
-            }
+            verifier
+                .verify(
+                    &data_to_verify,
+                    &self.server_signature_public_key,
+                    &signature,
+                )
+                .map_err(|_| HandshakeError::InvalidSignature)?;
         }
 
         // --- Key Derivation ---
@@ -216,14 +204,14 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
 
         // Key Agreement: If negotiated, compute the other part of the shared secret.
-        let shared_secret_agreement = if let (Some(engine), Some(server_pk)) =
-            (self.key_agreement_engine.as_ref(), server_key_agreement_pk)
-        {
-            let private_key = engine.key_pair.private_key();
-            Some(engine.wrapper.agree(&private_key, &server_pk)?)
-        } else {
-            None
-        };
+        let shared_secret_agreement =
+            if let (Some(engine), Some(server_pk)) =
+                (self.key_agreement_engine.as_ref(), &server_key_agreement_pk)
+            {
+                Some(engine.agree(server_pk)?)
+            } else {
+                None
+            };
 
         // Combine secrets: [agreement_secret || kem_secret]
         let final_shared_secret = if let Some(agreement_secret) = shared_secret_agreement {
@@ -295,9 +283,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
 
         // Update the transcript with the ClientKeyExchange message before transitioning state.
         // 在转换状态之前，使用 ClientKeyExchange 消息更新握手记录。
-        let key_exchange_bytes =
-            bincode::encode_to_vec(&key_exchange_msg, bincode::config::standard()).unwrap();
-        self.transcript_hasher.update(&key_exchange_bytes);
+        self.transcript.update(&key_exchange_msg);
 
         // Transition to the `Established` state, storing the derived keys.
         //
@@ -305,7 +291,7 @@ impl HandshakeClient<AwaitingKemPublicKey> {
         let established_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
-            transcript_hasher: self.transcript_hasher,
+            transcript: self.transcript,
             key_agreement_engine: self.key_agreement_engine,
             server_signature_public_key: self.server_signature_public_key,
             encryption_key: Some(encryption_key),

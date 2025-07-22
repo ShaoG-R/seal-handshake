@@ -5,12 +5,13 @@ use crate::error::{HandshakeError, Result};
 use crate::message::{EncryptedHeader, HandshakeMessage, KdfParams};
 use crate::suite::{KeyAgreementEngine, ProtocolSuite};
 use crate::state::{AwaitingKeyExchange, Established, Ready};
+use crate::transcript::Transcript;
 use seal_flow::common::header::AeadParamsBuilder;
 use seal_flow::crypto::bincode;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
 use seal_flow::crypto::traits::{
-    AeadAlgorithmTrait, KemAlgorithmTrait, KeyAgreementAlgorithmTrait, SignatureAlgorithmTrait,
+    AeadAlgorithmTrait, KemAlgorithmTrait, SignatureAlgorithmTrait,
 };
 use seal_flow::prelude::{prepare_decryption_from_slice, EncryptionConfigurator, SealFlowHeader};
 use seal_flow::rand::rngs::OsRng;
@@ -42,7 +43,7 @@ pub struct HandshakeServer<S> {
     /// A running hash of the handshake transcript for integrity checks.
     ///
     /// 用于完整性检查的握手记录的运行哈希。
-    transcript_hasher: Sha256,
+    transcript: Transcript,
     /// The server's long-term identity key pair for signing.
     ///
     /// 服务器用于签名的长期身份密钥对。
@@ -80,7 +81,7 @@ impl HandshakeServer<Ready> {
         Self {
             state: PhantomData,
             suite,
-            transcript_hasher: Sha256::new(),
+            transcript: Transcript::new(),
             signature_key_pair,
             kem_key_pair: None,
             key_agreement_engine: None,
@@ -109,9 +110,7 @@ impl HandshakeServer<Ready> {
     ) -> Result<(HandshakeMessage, HandshakeServer<AwaitingKeyExchange>)> {
         // Update transcript with ClientHello before processing.
         // 在处理之前，使用 ClientHello 更新握手记录。
-        let client_hello_bytes =
-            bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
-        self.transcript_hasher.update(&client_hello_bytes);
+        self.transcript.update(&message);
 
         match message {
             HandshakeMessage::ClientHello {
@@ -127,14 +126,14 @@ impl HandshakeServer<Ready> {
                     if let (Some(client_pk), Some(key_agreement)) =
                         (client_key_agreement_pk, self.suite.key_agreement())
                     {
-                        let server_key_pair = key_agreement.generate_keypair()?;
-                        let shared_secret = key_agreement
-                            .agree(&server_key_pair.private_key(), &client_pk)?;
-                        let engine = KeyAgreementEngine {
-                            key_pair: server_key_pair,
-                            wrapper: key_agreement.clone(),
-                        };
-                        (Some(engine.key_pair.public_key().clone()), Some(engine), Some(shared_secret))
+                        let (engine, shared_secret) =
+                            KeyAgreementEngine::new_for_server(key_agreement, &client_pk)?;
+
+                        (
+                            Some(engine.public_key().clone()),
+                            Some(engine),
+                            Some(shared_secret),
+                        )
                     } else {
                         (None, None, None)
                     };
@@ -172,18 +171,16 @@ impl HandshakeServer<Ready> {
 
                 // Update transcript with ServerHello before sending.
                 // 在发送之前，使用 ServerHello 更新握手记录。
-                let server_hello_bytes =
-                    bincode::encode_to_vec(&server_hello, bincode::config::standard()).unwrap();
-                self.transcript_hasher.update(&server_hello_bytes);
+                self.transcript.update(&server_hello);
 
                 let next_server = HandshakeServer {
                     state: PhantomData,
                     suite: self.suite,
-                    transcript_hasher: self.transcript_hasher,
+                    transcript: self.transcript,
                     signature_key_pair: self.signature_key_pair,
                     kem_key_pair: Some(kem_key_pair),
                     key_agreement_engine,
-                    agreement_shared_secret: agreement_shared_secret.map(|s| SharedSecret(s.into())),
+                    agreement_shared_secret,
                     encryption_key: None,
                     decryption_key: None,
                 };
@@ -220,9 +217,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
     ) -> Result<(Vec<u8>, HandshakeServer<Established>)> {
         // Update transcript with ClientKeyExchange before processing.
         // 在处理之前，使用 ClientKeyExchange 更新握手记录。
-        let key_exchange_bytes =
-            bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
-        self.transcript_hasher.update(&key_exchange_bytes);
+        self.transcript.update(&message);
 
         // Extract the encrypted message and encapsulated key from the client's message.
         // 从客户端消息中提取加密消息和封装的密钥。
@@ -294,7 +289,7 @@ impl HandshakeServer<AwaitingKeyExchange> {
         let established_server = HandshakeServer {
             state: PhantomData,
             suite: self.suite,
-            transcript_hasher: self.transcript_hasher,
+            transcript: self.transcript,
             signature_key_pair: self.signature_key_pair,
             kem_key_pair: None, // Consumed
             key_agreement_engine: self.key_agreement_engine,
@@ -323,7 +318,7 @@ impl HandshakeServer<Established> {
         let (signature_algorithm, signed_transcript_hash, transcript_signature) =
             if let Some(signer) = self.suite.signature() {
                 // Finalize the transcript hash.
-                let transcript_hash = self.transcript_hasher.clone().finalize().to_vec();
+                let transcript_hash = self.transcript.current_hash();
 
                 // Sign the hash.
                 let signature =
