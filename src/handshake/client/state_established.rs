@@ -2,7 +2,9 @@ use super::{Established, HandshakeClient, SignaturePresence, WithSignature, With
 use crate::{
     crypto::suite::KeyAgreementPresence,
     error::{HandshakeError, Result},
-    protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams},
+    protocol::message::{
+        EncryptedHeader, HandshakeMessage, KdfParams, NewSessionTicketPayload, ServerFinishedPayload,
+    },
 };
 use seal_flow::{
     common::header::AeadParamsBuilder,
@@ -69,9 +71,12 @@ impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeClient<Establish
     /// 处理来自服务器的 `NewSessionTicket` 消息。
     ///
     /// 客户端应将此票据与主密钥一起存储，以备将来恢复之用。
-    pub fn process_new_session_ticket(&mut self, message: HandshakeMessage) -> Result<()> {
+    pub fn process_new_session_ticket(
+        &mut self,
+        message: HandshakeMessage<Sig, Ka>,
+    ) -> Result<()> {
         match message {
-            HandshakeMessage::NewSessionTicket { ticket } => {
+            HandshakeMessage::NewSessionTicket(NewSessionTicketPayload { ticket }) => {
                 self.new_session_ticket = Some(ticket);
                 Ok(())
             }
@@ -110,9 +115,15 @@ impl<Ka: KeyAgreementPresence> HandshakeClient<Established, WithSignature, Ka> {
     /// 解密来自服务器的消息并验证握手记录签名。
     ///
     /// 此方法专用于 `WithSignature` 的套件。
-    pub fn decrypt(&self, message: HandshakeMessage, aad: Option<&[u8]>) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        message: HandshakeMessage<WithSignature, Ka>,
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
         let encrypted_message = match message {
-            HandshakeMessage::ServerFinished { encrypted_message } => encrypted_message,
+            HandshakeMessage::ServerFinished(ServerFinishedPayload { encrypted_message }) => {
+                encrypted_message
+            }
             _ => return Err(HandshakeError::InvalidMessage),
         };
 
@@ -144,9 +155,15 @@ impl<Ka: KeyAgreementPresence> HandshakeClient<Established, WithoutSignature, Ka
     /// 解密来自服务器的消息。
     ///
     /// 此方法专用于 `WithoutSignature` 的套件，不执行握手记录验证。
-    pub fn decrypt(&self, message: HandshakeMessage, aad: Option<&[u8]>) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        message: HandshakeMessage<WithoutSignature, Ka>,
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
         let encrypted_message = match message {
-            HandshakeMessage::ServerFinished { encrypted_message } => encrypted_message,
+            HandshakeMessage::ServerFinished(ServerFinishedPayload { encrypted_message }) => {
+                encrypted_message
+            }
             _ => return Err(HandshakeError::InvalidMessage),
         };
 

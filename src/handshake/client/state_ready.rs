@@ -4,8 +4,9 @@ use super::{
 };
 use crate::{
     crypto::suite::{KeyAgreementPresence, WithKeyAgreement, WithoutKeyAgreement},
-    protocol::message::HandshakeMessage,
+    protocol::message::{ClientHelloPayload, HandshakeMessage},
 };
+use seal_flow::crypto::prelude::TypedKeyAgreementPublicKey;
 use std::marker::PhantomData;
 
 impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeClient<Ready, Sig, Ka> {
@@ -28,54 +29,30 @@ impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeClient<Ready, Si
     /// 用于密钥协商的公钥。
     /// 然后它会将客户端转换到 `AwaitingKemPublicKey` 状态。
     pub fn start_handshake(
-        self,
+        mut self,
     ) -> (
-        HandshakeMessage,
+        HandshakeMessage<Sig, Ka>,
         HandshakeClient<AwaitingKemPublicKey, Sig, Ka>,
     )
     where
-        Self: ReadyStateOperations<Sig, Ka>,
+        Self: ClientKeyAgreementHandler<Ka>,
     {
-        ReadyStateOperations::start_handshake(self)
-    }
-}
+        let (ka_pk, ka_engine) = self.generate_key_agreement_part().unwrap();
 
-/// A trait to encapsulate state-specific operations for the `Ready` state.
-/// This allows for different implementations based on whether key agreement is used.
-pub trait ReadyStateOperations<Sig: SignaturePresence, Ka: KeyAgreementPresence> {
-    fn start_handshake(
-        self,
-    ) -> (
-        HandshakeMessage,
-        HandshakeClient<AwaitingKemPublicKey, Sig, Ka>,
-    );
-}
-
-impl<Sig: SignaturePresence> ReadyStateOperations<Sig, WithKeyAgreement>
-    for HandshakeClient<Ready, Sig, WithKeyAgreement>
-{
-    fn start_handshake(
-        mut self,
-    ) -> (
-        HandshakeMessage,
-        HandshakeClient<AwaitingKemPublicKey, Sig, WithKeyAgreement>,
-    ) {
-        let engine = KeyAgreementEngine::new_for_client(self.suite.key_agreement()).unwrap();
-        let key_agreement_public_key = Some(engine.public_key().clone());
-
-        let client_hello = HandshakeMessage::ClientHello {
-            key_agreement_public_key,
+        let client_hello_payload = ClientHelloPayload {
+            key_agreement_public_key: ka_pk,
             session_ticket: self.session_ticket_to_send.take(),
             kem_algorithm: self.suite.kem().algorithm(),
         };
 
+        let client_hello = HandshakeMessage::ClientHello(client_hello_payload);
         self.transcript.update(&client_hello);
 
         let next_client = HandshakeClient {
             state: PhantomData,
             suite: self.suite,
             transcript: self.transcript,
-            key_agreement_engine: Some(engine),
+            key_agreement_engine: ka_engine,
             server_signature_public_key: self.server_signature_public_key,
             encryption_key: None,
             decryption_key: None,
@@ -89,37 +66,28 @@ impl<Sig: SignaturePresence> ReadyStateOperations<Sig, WithKeyAgreement>
     }
 }
 
-impl<Sig: SignaturePresence> ReadyStateOperations<Sig, WithoutKeyAgreement>
-    for HandshakeClient<Ready, Sig, WithoutKeyAgreement>
+pub trait ClientKeyAgreementHandler<K: KeyAgreementPresence> {
+    fn generate_key_agreement_part(
+        &self,
+    ) -> crate::error::Result<(K::MessagePublicKey, Option<KeyAgreementEngine>)>;
+}
+
+impl<S: SignaturePresence> ClientKeyAgreementHandler<WithKeyAgreement>
+    for HandshakeClient<Ready, S, WithKeyAgreement>
 {
-    fn start_handshake(
-        mut self,
-    ) -> (
-        HandshakeMessage,
-        HandshakeClient<AwaitingKemPublicKey, Sig, WithoutKeyAgreement>,
-    ) {
-        let client_hello = HandshakeMessage::ClientHello {
-            key_agreement_public_key: None,
-            session_ticket: self.session_ticket_to_send.take(),
-            kem_algorithm: self.suite.kem().algorithm(),
-        };
+    fn generate_key_agreement_part(
+        &self,
+    ) -> crate::error::Result<(TypedKeyAgreementPublicKey, Option<KeyAgreementEngine>)> {
+        let engine = KeyAgreementEngine::new_for_client(&self.suite.key_agreement())?;
+        let public_key = engine.public_key().clone();
+        Ok((public_key, Some(engine)))
+    }
+}
 
-        self.transcript.update(&client_hello);
-
-        let next_client = HandshakeClient {
-            state: PhantomData,
-            suite: self.suite,
-            transcript: self.transcript,
-            key_agreement_engine: None,
-            server_signature_public_key: self.server_signature_public_key,
-            encryption_key: None,
-            decryption_key: None,
-            established_master_secret: None,
-            new_session_ticket: None,
-            resumption_master_secret: self.resumption_master_secret.take(),
-            session_ticket_to_send: None,
-        };
-
-        (client_hello, next_client)
+impl<S: SignaturePresence> ClientKeyAgreementHandler<WithoutKeyAgreement>
+    for HandshakeClient<Ready, S, WithoutKeyAgreement>
+{
+    fn generate_key_agreement_part(&self) -> crate::error::Result<((), Option<KeyAgreementEngine>)> {
+        Ok(((), None))
     }
 }

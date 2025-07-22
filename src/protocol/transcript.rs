@@ -7,7 +7,10 @@
 //!
 //! 此结构体集中了更新和最终确定握手记录哈希的逻辑，
 //! 确保了客户端和服务器之间的一致性。
-use crate::protocol::message::HandshakeMessage;
+use crate::{
+    crypto::suite::{KeyAgreementPresence, SignaturePresence},
+    protocol::message::HandshakeMessage,
+};
 use seal_flow::crypto::bincode;
 use sha2::{Digest, Sha256};
 
@@ -31,7 +34,14 @@ impl Transcript {
     /// 使用握手消息更新握手记录。
     ///
     /// 在添加到哈希之前，消息被序列化为字节。
-    pub fn update(&mut self, message: &HandshakeMessage) {
+    pub fn update<S: SignaturePresence, K: KeyAgreementPresence>(
+        &mut self,
+        message: &HandshakeMessage<S, K>,
+    ) {
+        self.update_with_bincode(message)
+    }
+
+    fn update_with_bincode<T: bincode::Encode>(&mut self, message: &T) {
         // Serialization can't fail with standard bincode config, so unwrap is safe.
         // 使用标准的 bincode 配置，序列化不会失败，因此 unwrap 是安全的。
         let bytes = bincode::encode_to_vec(message, bincode::config::standard()).unwrap();

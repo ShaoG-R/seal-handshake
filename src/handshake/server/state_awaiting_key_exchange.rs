@@ -5,10 +5,10 @@ use crate::{
         suite::KeyAgreementPresence,
     },
     error::{HandshakeError, Result},
-    protocol::message::{EncryptedHeader, HandshakeMessage},
+    protocol::message::{ClientKeyExchangePayload, EncryptedHeader, HandshakeMessage},
 };
 use seal_flow::{
-    crypto::{prelude::*, traits::KemAlgorithmTrait},
+    crypto::{keys::asymmetric::kem::EncapsulatedKey, prelude::*, traits::KemAlgorithmTrait},
     prelude::{PendingDecryption, prepare_decryption_from_slice},
 };
 use std::{borrow::Cow, marker::PhantomData};
@@ -33,7 +33,7 @@ impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<AwaitingK
     /// 5. 转换到 `Established` 状态，此时可以进行安全的应用数据交换。
     pub fn process_client_key_exchange(
         mut self,
-        message: HandshakeMessage,
+        message: HandshakeMessage<Sig, Ka>,
         aad: &[u8],
     ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig, Ka>)> {
         self.transcript.update(&message);
@@ -74,12 +74,14 @@ impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<AwaitingK
 }
 
 /// Extracts the contents of a `ClientKeyExchange` message.
-fn extract_client_key_exchange(message: &HandshakeMessage) -> Result<(Vec<u8>, EncapsulatedKey)> {
+fn extract_client_key_exchange<Sig: SignaturePresence, Ka: KeyAgreementPresence>(
+    message: &HandshakeMessage<Sig, Ka>,
+) -> Result<(Vec<u8>, EncapsulatedKey)> {
     match message {
-        HandshakeMessage::ClientKeyExchange {
+        HandshakeMessage::ClientKeyExchange(ClientKeyExchangePayload {
             encrypted_message,
             encapsulated_key,
-        } => Ok((encrypted_message.clone(), encapsulated_key.clone())),
+        }) => Ok((encrypted_message.clone(), encapsulated_key.clone())),
         _ => Err(HandshakeError::InvalidMessage),
     }
 }

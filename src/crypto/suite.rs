@@ -1,18 +1,20 @@
+use crate::bincode;
 use seal_flow::crypto::{
-    keys::asymmetric::{
+    algorithms::asymmetric::{key_agreement::KeyAgreementAlgorithm, signature::SignatureAlgorithm}, keys::asymmetric::{
         kem::SharedSecret,
         key_agreement::{TypedKeyAgreementKeyPair, TypedKeyAgreementPublicKey},
         signature::{TypedSignatureKeyPair, TypedSignaturePublicKey},
-    },
-    wrappers::{
+    }, wrappers::{
         aead::AeadAlgorithmWrapper,
         asymmetric::{
             kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper,
             signature::SignatureAlgorithmWrapper,
         },
         kdf::key::KdfKeyWrapper,
-    },
+    }
 };
+use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
 /// A helper struct to carry the key agreement key pair during the handshake.
@@ -74,35 +76,52 @@ impl KeyAgreementEngine {
 ///
 /// 一个 trait，用于标记协议套件中是否包含签名方案。
 /// 这允许对所需的密钥进行编译时检查。
-pub trait SignaturePresence: std::fmt::Debug + Clone + Send + Sync + 'static {
+pub trait SignaturePresence:
+    std::fmt::Debug + Clone + Send + Sync + 'static + bincode::Encode + bincode::Decode<()>
+{
     /// The type of key the server needs for this configuration (key pair or nothing).
     /// 服务器在此配置下需要的密钥类型（密钥对或无）。
     type ServerKey;
     /// The type of key the client needs for this configuration (public key or nothing).
     /// 客户端在此配置下需要的密钥类型（公钥或无）。
     type ClientKey;
+    /// The signature type used in the `ServerHello` message.
+    /// `ServerHello` 消息中使用的签名类型。
+    type MessageSignature: Serialize
+        + for<'a> Deserialize<'a>
+        + std::fmt::Debug
+        + Clone
+        + Send
+        + Sync
+        + 'static
+        + bincode::Encode
+        + bincode::Decode<()>;
 }
 
 /// Marker struct for when a signature algorithm is present.
 ///
 /// 当签名算法存在时的标记结构体。
-#[derive(Debug, Clone)]
-pub struct WithSignature(pub SignatureAlgorithmWrapper);
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct WithSignature(pub SignatureAlgorithm);
 
 impl SignaturePresence for WithSignature {
     type ServerKey = TypedSignatureKeyPair;
     type ClientKey = TypedSignaturePublicKey;
+    type MessageSignature = SignatureWrapper;
 }
 
 /// Marker struct for when no signature algorithm is used.
 ///
 /// 当不使用签名算法时的标记结构体。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
 pub struct WithoutSignature;
 
 impl SignaturePresence for WithoutSignature {
     type ServerKey = ();
     type ClientKey = ();
+    type MessageSignature = ();
 }
 
 // --- Key Agreement Presence Marker ---
@@ -111,23 +130,43 @@ impl SignaturePresence for WithoutSignature {
 ///
 /// 一个 trait，用于标记协议套件中是否包含密钥协商方案。
 /// 这允许进行编译时检查。
-pub trait KeyAgreementPresence: std::fmt::Debug + Clone + Send + Sync + 'static {}
+pub trait KeyAgreementPresence:
+    std::fmt::Debug + Clone + Send + Sync + 'static + bincode::Encode + bincode::Decode<()>
+{
+    /// The public key type used in `ClientHello` and `ServerHello`.
+    /// `ClientHello` 和 `ServerHello` 中使用的公钥类型。
+    type MessagePublicKey: Serialize
+        + for<'a> Deserialize<'a>
+        + std::fmt::Debug
+        + Clone
+        + Send
+        + Sync
+        + 'static
+        + bincode::Encode
+        + bincode::Decode<()>;
+}
 
 /// Marker struct for when a key agreement algorithm is present.
 ///
 /// 当存在密钥协商算法时的标记结构体。
-#[derive(Debug, Clone)]
-pub struct WithKeyAgreement(pub KeyAgreementAlgorithmWrapper);
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct WithKeyAgreement(pub KeyAgreementAlgorithm);
 
-impl KeyAgreementPresence for WithKeyAgreement {}
+impl KeyAgreementPresence for WithKeyAgreement {
+    type MessagePublicKey = TypedKeyAgreementPublicKey;
+}
 
 /// Marker struct for when no key agreement algorithm is used.
 ///
 /// 当不使用密钥协商算法时的标记结构体。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
 pub struct WithoutKeyAgreement;
 
-impl KeyAgreementPresence for WithoutKeyAgreement {}
+impl KeyAgreementPresence for WithoutKeyAgreement {
+    type MessagePublicKey = ();
+}
 
 // --- Final ProtocolSuite ---
 #[derive(Debug, Clone)]
@@ -154,14 +193,14 @@ impl<S: SignaturePresence, K: KeyAgreementPresence> ProtocolSuite<S, K> {
 }
 
 impl<S: SignaturePresence> ProtocolSuite<S, WithKeyAgreement> {
-    pub fn key_agreement(&self) -> &KeyAgreementAlgorithmWrapper {
-        &self.key_agreement.0
+    pub fn key_agreement(&self) -> KeyAgreementAlgorithmWrapper {
+        self.key_agreement.0.into_wrapper()
     }
 }
 
 impl<K: KeyAgreementPresence> ProtocolSuite<WithSignature, K> {
-    pub fn signature(&self) -> &SignatureAlgorithmWrapper {
-        &self.signature.0
+    pub fn signature(&self) -> SignatureAlgorithmWrapper {
+        self.signature.0.into_wrapper()
     }
 }
 
@@ -195,7 +234,7 @@ impl BuilderWithKem {
     ) -> BuilderWithKeyAgreement<WithKeyAgreement> {
         BuilderWithKeyAgreement {
             kem: self.kem,
-            key_agreement: WithKeyAgreement(key_agreement),
+            key_agreement: WithKeyAgreement(key_agreement.algorithm()),
         }
     }
 
@@ -223,7 +262,7 @@ impl<K: KeyAgreementPresence> BuilderWithKeyAgreement<K> {
         BuilderWithAsymmetric {
             kem: self.kem,
             key_agreement: self.key_agreement,
-            signature: WithSignature(signature),
+            signature: WithSignature(signature.algorithm()),
         }
     }
 

@@ -13,6 +13,23 @@ mod state_awaiting_key_exchange;
 mod state_established;
 mod state_ready;
 
+use seal_flow::crypto::prelude::TypedKeyAgreementPublicKey;
+
+// Helper trait to allow `ka_pk.as_ref_option()` on generic types
+pub trait AsPublicKeyOption {
+    fn as_ref_option(&self) -> Option<&TypedKeyAgreementPublicKey>;
+}
+impl AsPublicKeyOption for TypedKeyAgreementPublicKey {
+    fn as_ref_option(&self) -> Option<&TypedKeyAgreementPublicKey> {
+        Some(self)
+    }
+}
+impl AsPublicKeyOption for () {
+    fn as_ref_option(&self) -> Option<&TypedKeyAgreementPublicKey> {
+        None
+    }
+}
+
 pub use builder::HandshakeServerBuilder;
 use builder::Missing;
 use seal_flow::crypto::{

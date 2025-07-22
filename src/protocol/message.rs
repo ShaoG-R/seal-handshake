@@ -5,12 +5,14 @@ use seal_flow::crypto::algorithms::asymmetric::signature::SignatureAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::{
-    EncapsulatedKey, TypedAsymmetricKeyTrait, TypedKemPublicKey, TypedKeyAgreementPublicKey,
+    EncapsulatedKey, TypedAsymmetricKeyTrait, TypedKemPublicKey, 
     TypedSignaturePublicKey,
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
 use serde::{Deserialize, Serialize};
+
+use crate::crypto::suite::{KeyAgreementPresence, SignaturePresence};
 
 /// A session ticket used for resumption. It contains the master secret
 /// and an expiration timestamp, all encrypted by the server.
@@ -24,43 +26,70 @@ pub struct SessionTicket {
     pub expiry_timestamp: u64,
 }
 
+/// Client -> Server: Initiates handshake.
+#[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
+#[bincode(crate = "bincode")]
+pub struct ClientHelloPayload<K: KeyAgreementPresence> {
+    #[bincode(with_serde)]
+    pub key_agreement_public_key: K::MessagePublicKey,
+    pub session_ticket: Option<Vec<u8>>,
+    pub kem_algorithm: KemAlgorithm,
+}
+
+/// Server -> Client: Provides the server's public key and supported algorithms.
+#[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
+#[bincode(crate = "bincode")]
+pub struct ServerHelloPayload<S: SignaturePresence, K: KeyAgreementPresence> {
+    pub kem_public_key: TypedKemPublicKey,
+    #[bincode(with_serde)]
+    pub key_agreement_public_key: K::MessagePublicKey,
+    /// The signature of the server's ephemeral public keys (KEM and KeyAgreement),
+    /// signed by its long-term identity key.
+    #[bincode(with_serde)]
+    pub signature: S::MessageSignature,
+}
+
+/// Client -> Server: Contains the KEM encapsulated key and an encrypted payload.
+#[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
+#[bincode(crate = "bincode")]
+pub struct ClientKeyExchangePayload {
+    pub encrypted_message: Vec<u8>,
+    pub encapsulated_key: EncapsulatedKey,
+}
+
+/// Server -> Client: An encrypted response message.
+#[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
+#[bincode(crate = "bincode")]
+pub struct ServerFinishedPayload {
+    pub encrypted_message: Vec<u8>,
+}
+
+/// Server -> Client: A new session ticket for the client to use in future handshakes.
+#[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
+#[bincode(crate = "bincode")]
+pub struct NewSessionTicketPayload {
+    /// The encrypted and authenticated session ticket.
+    pub ticket: Vec<u8>,
+}
+
 /// Defines the messages exchanged during the handshake protocol.
 #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode, Debug, Clone)]
 #[bincode(crate = "bincode")]
-pub enum HandshakeMessage {
-    /// Client -> Server: Initiates handshake, requesting the server's public key.
-    /// Can optionally include a KeyAgreement public key and a session ticket for resumption.
-    ClientHello {
-        key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
-        session_ticket: Option<Vec<u8>>,
-        kem_algorithm: KemAlgorithm,
-    },
-
+pub enum HandshakeMessage<S: SignaturePresence, K: KeyAgreementPresence>
+where
+    S: SignaturePresence,
+    K: KeyAgreementPresence,
+{
+    /// Client -> Server: Initiates handshake.
+    ClientHello(ClientHelloPayload<K>),
     /// Server -> Client: Provides the server's public key and supported algorithms.
-    ServerHello {
-        kem_public_key: TypedKemPublicKey,
-        key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
-        /// The signature of the server's ephemeral public keys (KEM and KeyAgreement),
-        /// signed by its long-term identity key.
-        signature: Option<SignatureWrapper>,
-    },
-
+    ServerHello(ServerHelloPayload<S, K>),
     /// Client -> Server: Contains the KEM encapsulated key and an encrypted payload.
-    /// The payload is a full `seal-flow` encrypted message (header + ciphertext).
-    ClientKeyExchange {
-        encrypted_message: Vec<u8>,
-        encapsulated_key: EncapsulatedKey,
-    },
-
+    ClientKeyExchange(ClientKeyExchangePayload),
     /// Server -> Client: An encrypted response message.
-    /// The payload is a full `seal-flow` encrypted message (header + ciphertext).
-    ServerFinished { encrypted_message: Vec<u8> },
-
+    ServerFinished(ServerFinishedPayload),
     /// Server -> Client: A new session ticket for the client to use in future handshakes.
-    NewSessionTicket {
-        /// The encrypted and authenticated session ticket.
-        ticket: Vec<u8>,
-    },
+    NewSessionTicket(NewSessionTicketPayload),
 }
 
 /// A custom header for `seal-flow` that includes the KEM-specific information

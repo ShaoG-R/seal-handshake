@@ -2,7 +2,9 @@ use super::{Established, HandshakeServer, SignaturePresence};
 use crate::bincode;
 use crate::crypto::suite::{KeyAgreementPresence, WithSignature, WithoutSignature};
 use crate::error::{HandshakeError, Result};
-use crate::protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams};
+use crate::protocol::message::{
+    EncryptedHeader, HandshakeMessage, KdfParams, NewSessionTicketPayload,
+};
 use seal_flow::{
     common::header::AeadParamsBuilder,
     crypto::{
@@ -31,7 +33,7 @@ impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<Establish
     ///
     /// 此方法只能在握手建立后调用。它使用一个长期的票据加密密钥
     /// 来加密会话的主密钥。
-    pub fn issue_session_ticket(&self) -> Result<HandshakeMessage> {
+    pub fn issue_session_ticket(&self) -> Result<HandshakeMessage<Sig, Ka>> {
         let tek = self
             .ticket_encryption_key
             .as_ref()
@@ -81,9 +83,11 @@ impl<Sig: SignaturePresence, Ka: KeyAgreementPresence> HandshakeServer<Establish
             .into_writer(Vec::new())?
             .encrypt_ordinary_to_vec(&serialized_ticket)?;
 
-        Ok(HandshakeMessage::NewSessionTicket {
-            ticket: encrypted_ticket,
-        })
+        Ok(HandshakeMessage::NewSessionTicket(
+            NewSessionTicketPayload {
+                ticket: encrypted_ticket,
+            },
+        ))
     }
 }
 

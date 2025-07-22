@@ -11,7 +11,7 @@ use seal_handshake::crypto::suite::ProtocolSuiteBuilder;
 use seal_handshake::error::Result;
 use seal_handshake::handshake::client::HandshakeClient;
 use seal_handshake::handshake::server::HandshakeServer;
-use seal_handshake::protocol::message::HandshakeMessage;
+use seal_handshake::protocol::message::{HandshakeMessage, ServerFinishedPayload};
 
 #[test]
 fn test_full_handshake_and_data_exchange() -> Result<()> {
@@ -100,9 +100,10 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     println!("S -> C: Sending encrypted response");
 
     // C: Decrypt application data
-    let server_finished_message = HandshakeMessage::ServerFinished {
-        encrypted_message: server_ciphertext,
-    };
+    let server_finished_message =
+        HandshakeMessage::ServerFinished(ServerFinishedPayload {
+            encrypted_message: server_ciphertext,
+        });
     let decrypted_server_message = client.decrypt(server_finished_message, Some(aad))?;
     println!(
         "C: Decrypted response: '{}'",
@@ -198,9 +199,10 @@ fn test_kem_only_handshake() -> Result<()> {
     println!("S -> C: Sending encrypted response");
 
     // C: Decrypt application data
-    let server_finished_message = HandshakeMessage::ServerFinished {
-        encrypted_message: server_ciphertext,
-    };
+    let server_finished_message =
+        HandshakeMessage::ServerFinished(ServerFinishedPayload {
+            encrypted_message: server_ciphertext,
+        });
     let decrypted_server_message = client.decrypt(server_finished_message, Some(aad))?;
     println!(
         "C: Decrypted response: '{}'",
