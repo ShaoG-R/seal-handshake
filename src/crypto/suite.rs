@@ -140,8 +140,8 @@ impl ProtocolSuite<WithSignature> {
 }
 
 impl ProtocolSuite<WithoutSignature> {
-    pub fn signature(&self) -> Option<&SignatureAlgorithmWrapper> {
-        None
+    pub fn signature(&self) -> () {
+        ()
     }
 }
 
