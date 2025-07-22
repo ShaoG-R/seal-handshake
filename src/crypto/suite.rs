@@ -116,11 +116,6 @@ pub struct ProtocolSuite<S: SignaturePresence> {
 }
 
 impl<S: SignaturePresence> ProtocolSuite<S> {
-    /// Starts building a new ProtocolSuite.
-    pub fn builder() -> ProtocolSuiteBuilder {
-        ProtocolSuiteBuilder
-    }
-
     pub fn kem(&self) -> &KemAlgorithmWrapper {
         &self.kem
     }
@@ -157,17 +152,25 @@ impl ProtocolSuite<WithoutSignature> {
 pub struct ProtocolSuiteBuilder;
 
 impl ProtocolSuiteBuilder {
-    /// Sets the KEM and optional key agreement algorithm, moving to the signature selection state.
+    /// Creates a new builder.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Sets the KEM and optional key agreement algorithm, moving to the next state.
     pub fn with_kem(
         self,
         kem: KemAlgorithmWrapper,
         key_agreement: Option<KeyAgreementAlgorithmWrapper>,
     ) -> BuilderWithKem {
-        BuilderWithKem { kem, key_agreement }
+        BuilderWithKem {
+            kem,
+            key_agreement,
+        }
     }
 }
 
-/// State after KEM is set. Requires selecting signature configuration.
+/// State after KEM configuration is set. Requires Signature.
 pub struct BuilderWithKem {
     kem: KemAlgorithmWrapper,
     key_agreement: Option<KeyAgreementAlgorithmWrapper>,
@@ -175,11 +178,14 @@ pub struct BuilderWithKem {
 
 impl BuilderWithKem {
     /// Configures the suite with a signature algorithm.
-    pub fn with_signature(self, signature: SignatureAlgorithmWrapper) -> BuilderWithAlgorithms<WithSignature> {
+    pub fn with_signature(
+        self,
+        signature: SignatureAlgorithmWrapper,
+    ) -> BuilderWithAlgorithms<WithSignature> {
         BuilderWithAlgorithms {
             kem: self.kem,
-            key_agreement: self.key_agreement,
             signature: WithSignature(signature),
+            key_agreement: self.key_agreement,
         }
     }
 
@@ -187,8 +193,8 @@ impl BuilderWithKem {
     pub fn without_signature(self) -> BuilderWithAlgorithms<WithoutSignature> {
         BuilderWithAlgorithms {
             kem: self.kem,
-            key_agreement: self.key_agreement,
             signature: WithoutSignature,
+            key_agreement: self.key_agreement,
         }
     }
 }
