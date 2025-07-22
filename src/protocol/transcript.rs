@@ -38,10 +38,6 @@ impl Transcript {
         &mut self,
         message: &HandshakeMessage<S, K>,
     ) {
-        self.update_with_bincode(message)
-    }
-
-    fn update_with_bincode<T: bincode::Encode>(&mut self, message: &T) {
         // Serialization can't fail with standard bincode config, so unwrap is safe.
         // 使用标准的 bincode 配置，序列化不会失败，因此 unwrap 是安全的。
         let bytes = bincode::encode_to_vec(message, bincode::config::standard()).unwrap();
