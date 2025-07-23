@@ -1,5 +1,5 @@
 use seal_flow::crypto::{
-    algorithms::{asymmetric::{kem::KemAlgorithm, key_agreement::KeyAgreementAlgorithm}, kdf::key::KdfKeyAlgorithm}, keys::asymmetric::{
+    algorithms::{asymmetric::{kem::KemAlgorithm, key_agreement::KeyAgreementAlgorithm, signature::SignatureAlgorithm}, kdf::key::KdfKeyAlgorithm}, keys::asymmetric::{
         kem::SharedSecret,
         key_agreement::{TypedKeyAgreementKeyPair, TypedKeyAgreementPublicKey},
         signature::{TypedSignatureKeyPair, TypedSignaturePublicKey},
@@ -7,7 +7,6 @@ use seal_flow::crypto::{
         aead::AeadAlgorithmWrapper,
         asymmetric::{
             kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper,
-            signature::SignatureAlgorithmWrapper,
         },
         kdf::key::KdfKeyWrapper,
     }
@@ -96,7 +95,7 @@ pub trait SignaturePresence: std::fmt::Debug + Clone + Send + Sync + 'static {
 ///
 /// 当签名算法存在时的标记结构体。
 #[derive(Debug, Clone)]
-pub struct WithSignature(pub SignatureAlgorithmWrapper);
+pub struct WithSignature(pub SignatureAlgorithm);
 
 impl SignaturePresence for WithSignature {
     type ServerKey = TypedSignatureKeyPair;
@@ -159,8 +158,8 @@ impl<S: SignaturePresence> ProtocolSuite<S> {
 }
 
 impl ProtocolSuite<WithSignature> {
-    pub fn signature(&self) -> &SignatureAlgorithmWrapper {
-        &self.signature.0
+    pub fn signature(&self) -> SignatureAlgorithm {
+        self.signature.0
     }
 }
 
@@ -195,7 +194,7 @@ impl BuilderWithKem {
     /// Configures the suite with a signature algorithm.
     pub fn with_signature(
         self,
-        signature: SignatureAlgorithmWrapper,
+        signature: SignatureAlgorithm,
     ) -> BuilderWithAlgorithms<WithSignature> {
         BuilderWithAlgorithms {
             kem: self.kem,

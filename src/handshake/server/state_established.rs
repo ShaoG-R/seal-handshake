@@ -97,7 +97,7 @@ impl HandshakeServer<Established, ServerEstablished, WithSignature> {
         // Sign the transcript.
         let signer = self.suite.signature();
         let transcript_hash = self.transcript.current_hash();
-        let signature = signer.sign(&transcript_hash, &self.signature_key_pair.private_key())?;
+        let signature = signer.into_wrapper().sign(&transcript_hash, &self.signature_key_pair.private_key())?;
 
         // Encrypt with the signature.
         common_encrypt(
@@ -105,7 +105,7 @@ impl HandshakeServer<Established, ServerEstablished, WithSignature> {
             plaintext,
             aad,
             key,
-            Some(signer.algorithm()),
+            Some(signer),
             Some(transcript_hash),
             Some(signature.into()),
         )
