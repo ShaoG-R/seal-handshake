@@ -1,45 +1,41 @@
-use super::{
-    AwaitingKemPublicKey, EncapsulatedKey, Established, HandshakeClient, SessionKeysAndMaster,
-    SignaturePresence, WithSignature, WithoutSignature,
-};
-use crate::crypto::keys::derive_session_keys;
+use super::{HandshakeClient, SignaturePresence};
+use crate::crypto::keys::{derive_session_keys, SessionKeysAndMaster};
 use crate::crypto::signature::verify_ephemeral_keys;
+use crate::crypto::suite::{WithSignature, WithoutSignature};
 use crate::error::{HandshakeError, Result};
 use crate::protocol::{
     message::{EncryptedHeader, HandshakeMessage, KdfParams},
+    state::{AwaitingKemPublicKey, ClientAwaitingKemPublicKey, ClientEstablished, Established},
     transcript::Transcript,
 };
 use seal_flow::{
     common::header::AeadParamsBuilder,
     crypto::{
         prelude::*,
-        traits::{AeadAlgorithmTrait, KemAlgorithmTrait},
+        traits::{AeadAlgorithmTrait, KdfKeyAlgorithmTrait, KemAlgorithmTrait},
         wrappers::asymmetric::signature::SignatureWrapper,
     },
     prelude::EncryptionConfigurator,
-    rand::{TryRngCore, rngs::OsRng},
+    rand::{rngs::OsRng, TryRngCore},
 };
 use std::{borrow::Cow, marker::PhantomData};
 
-impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
-    /// Processes `ServerHello` for a suite with a signature scheme.
+impl HandshakeClient<AwaitingKemPublicKey, ClientAwaitingKemPublicKey, WithSignature> {
+    /// This function handles the `ServerHello` message, verifies its signature, derives session keys, and transitions to
+    /// the established state.
     ///
-    /// It verifies the server's signature on its ephemeral keys before proceeding.
-    ///
-    /// 为带有签名方案的套件处理 `ServerHello`。
-    ///
-    /// 在继续之前，它会验证服务器对其临时密钥的签名。
+    /// 此函数处理 `ServerHello` 消息，验证其签名，派生会话密钥，并转换到 `Established` 状态。
     pub fn process_server_hello(
-        mut self,
+        self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
         aad: Option<&[u8]>,
     ) -> Result<(
         HandshakeMessage,
-        HandshakeClient<Established, WithSignature>,
+        HandshakeClient<Established, ClientEstablished, WithSignature>,
     )> {
         let (server_kem_pk, server_key_agreement_pk, signature) =
-            common_server_hello_processing(&mut self.transcript, &message)?;
+            common_server_hello_processing(&self.transcript, &message)?;
 
         // Verify the signature.
         let verifier = self.suite.signature();
@@ -63,25 +59,22 @@ impl HandshakeClient<AwaitingKemPublicKey, WithSignature> {
     }
 }
 
-impl HandshakeClient<AwaitingKemPublicKey, WithoutSignature> {
-    /// Processes `ServerHello` for a suite without a signature scheme.
+impl HandshakeClient<AwaitingKemPublicKey, ClientAwaitingKemPublicKey, WithoutSignature> {
+    /// This function handles the `ServerHello` message without a signature, derives session keys, and transitions to the
+    /// established state.
     ///
-    /// Skips signature verification.
-    ///
-    /// 为不带签名方案的套件处理 `ServerHello`。
-    ///
-    /// 跳过签名验证。
+    /// 此函数处理不带签名的 `ServerHello` 消息，派生会话密钥，并转换到 `Established` 状态。
     pub fn process_server_hello(
-        mut self,
+        self,
         message: HandshakeMessage,
         initial_payload: Option<&[u8]>,
         aad: Option<&[u8]>,
     ) -> Result<(
         HandshakeMessage,
-        HandshakeClient<Established, WithoutSignature>,
+        HandshakeClient<Established, ClientEstablished, WithoutSignature>,
     )> {
         let (server_kem_pk, server_key_agreement_pk, _) =
-            common_server_hello_processing(&mut self.transcript, &message)?;
+            common_server_hello_processing(&self.transcript, &message)?;
 
         // Delegate to the common logic for key derivation and message creation.
         complete_server_hello_processing(
@@ -94,18 +87,17 @@ impl HandshakeClient<AwaitingKemPublicKey, WithoutSignature> {
     }
 }
 
-/// Parses the ServerHello and updates the transcript.
-///
-/// 解析 ServerHello 并更新握手记录。
+/// Helper to perform common processing of the `ServerHello` message.
 fn common_server_hello_processing(
-    transcript: &mut Transcript,
+    transcript: &Transcript,
     message: &HandshakeMessage,
 ) -> Result<(
     TypedKemPublicKey,
     Option<TypedKeyAgreementPublicKey>,
     Option<SignatureWrapper>,
 )> {
-    transcript.update(message);
+    let mut new_transcript = transcript.clone();
+    new_transcript.update(message);
 
     match message {
         HandshakeMessage::ServerHello {
@@ -121,54 +113,90 @@ fn common_server_hello_processing(
     }
 }
 
-/// Completes the handshake logic after `ServerHello` has been processed.
-/// This includes key derivation, encryption of initial payload, and state transition.
-///
-/// 在 `ServerHello` 处理完毕后完成握手逻辑。
-/// 这包括密钥派生、初始有效载荷的加密以及状态转换。
-fn complete_server_hello_processing<Sig: SignaturePresence>(
-    mut client: HandshakeClient<AwaitingKemPublicKey, Sig>,
+/// Helper to complete the handshake after processing `ServerHello`.
+/// This involves key derivation, creating the `ClientKeyExchange` message,
+/// and transitioning to the `Established` state.
+fn complete_server_hello_processing<S: SignaturePresence>(
+    client: HandshakeClient<AwaitingKemPublicKey, ClientAwaitingKemPublicKey, S>,
     server_kem_pk: TypedKemPublicKey,
     server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
     initial_payload: Option<&[u8]>,
     aad: Option<&[u8]>,
-) -> Result<(HandshakeMessage, HandshakeClient<Established, Sig>)> {
-    // --- Key Derivation ---
+) -> Result<(HandshakeMessage, HandshakeClient<Established, ClientEstablished, S>)> {
     let (session_keys, encapsulated_key) =
         derive_session_keys_from_server_hello(&client, server_kem_pk, server_key_agreement_pk)?;
 
-    // --- Create ClientKeyExchange ---
-    let key_exchange_msg = create_client_key_exchange(
-        &client,
-        &session_keys.encryption_key,
-        encapsulated_key,
-        initial_payload,
-        aad,
-    )?;
+    // Create the `ClientKeyExchange` message, which includes the encapsulated key
+    // and the encrypted initial payload (if any).
+    let encrypted_message = if let Some(plaintext) = initial_payload {
+        let aad = aad.unwrap_or_default();
+        let kdf_params = KdfParams {
+            algorithm: client.suite.kdf().algorithm(),
+            salt: Some(b"seal-handshake-salt".to_vec()),
+            info: Some(b"seal-handshake-c2s".to_vec()),
+        };
 
-    client.transcript.update(&key_exchange_msg);
+        let aead = client.suite.aead();
+        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
+            .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
+            .build();
 
-    // Transition to the `Established` state.
-    let established_client = HandshakeClient {
-        state: PhantomData,
-        suite: client.suite,
-        transcript: client.transcript,
-        key_agreement_engine: client.key_agreement_engine,
-        server_signature_public_key: client.server_signature_public_key,
-        encryption_key: Some(session_keys.encryption_key),
-        decryption_key: Some(session_keys.decryption_key),
-        established_master_secret: Some(session_keys.master_secret),
-        new_session_ticket: None,
-        resumption_master_secret: None, // Consumed
-        session_ticket_to_send: None,   // Consumed
+        let header = EncryptedHeader {
+            params,
+            kdf_params,
+            signature_algorithm: None,
+            signed_transcript_hash: None,
+            transcript_signature: None,
+        };
+
+        let ciphertext = EncryptionConfigurator::new(
+            header,
+            Cow::Borrowed(&session_keys.encryption_key),
+            Some(aad.to_vec()),
+        )
+        .into_writer(Vec::new())?
+        .encrypt_ordinary_to_vec(plaintext)?;
+        Some(ciphertext)
+    } else {
+        None
     };
 
-    Ok((key_exchange_msg, established_client))
+    let client_key_exchange = HandshakeMessage::ClientKeyExchange {
+        encrypted_message: encrypted_message.unwrap_or_default(),
+        encapsulated_key,
+    };
+
+    let HandshakeClient {
+        state: _,
+        state_data: _,
+        mut transcript,
+        suite,
+        server_signature_public_key,
+    } = client;
+
+    transcript.update(&client_key_exchange);
+
+    // Transition to the established state.
+    let established_client = HandshakeClient {
+        state: PhantomData,
+        state_data: ClientEstablished {
+            encryption_key: session_keys.encryption_key,
+            decryption_key: session_keys.decryption_key,
+            master_secret: session_keys.master_secret,
+            new_session_ticket: None,
+        },
+        suite,
+        transcript,
+        server_signature_public_key,
+    };
+
+    Ok((client_key_exchange, established_client))
 }
 
 /// Derives session keys based on the server's hello message and the client's state.
 fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
-    client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
+    client: &HandshakeClient<AwaitingKemPublicKey, ClientAwaitingKemPublicKey, Sig>,
     server_kem_pk: TypedKemPublicKey,
     server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
 ) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
@@ -178,64 +206,21 @@ fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
     let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
 
     // Key Agreement: If negotiated, compute the shared secret.
-    let shared_secret_agreement = if let (Some(engine), Some(server_pk)) = (
-        client.key_agreement_engine.as_ref(),
-        &server_key_agreement_pk,
-    ) {
-        Some(engine.agree(server_pk)?)
-    } else {
-        None
-    };
+    let shared_secret_agreement =
+        if let (Some(engine), Some(server_pk)) = (client.state_data.key_agreement_engine.as_ref(), &server_key_agreement_pk) {
+            Some(engine.agree(server_pk)?)
+        } else {
+            None
+        };
 
     // KDF: Derive session keys.
     let session_keys = derive_session_keys(
         &client.suite,
         shared_secret_kem,
         shared_secret_agreement,
-        client.resumption_master_secret.clone(), // Use the resumption secret
-        true,                                    // is_client = true
+        client.state_data.resumption_master_secret.clone(), // Use the resumption secret
+        true,                                             // is_client = true
     )?;
 
     Ok((session_keys, encapsulated_key))
-}
-
-/// Creates the `ClientKeyExchange` message, encrypting the initial payload.
-fn create_client_key_exchange<Sig: SignaturePresence>(
-    client: &HandshakeClient<AwaitingKemPublicKey, Sig>,
-    encryption_key: &TypedAeadKey,
-    encapsulated_key: EncapsulatedKey,
-    initial_payload: Option<&[u8]>,
-    aad: Option<&[u8]>,
-) -> Result<HandshakeMessage> {
-    let aad = aad.unwrap_or(b"seal-handshake-aad");
-    let aead = client.suite.aead();
-    let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
-        .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
-        .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
-        .build();
-
-    let kdf_params = KdfParams {
-        algorithm: client.suite.kdf().algorithm(),
-        salt: Some(b"seal-handshake-salt".to_vec()),
-        info: Some(b"seal-handshake-c2s".to_vec()),
-    };
-
-    let header = EncryptedHeader {
-        params,
-        kdf_params,
-        signature_algorithm: None,
-        signed_transcript_hash: None,
-        transcript_signature: None,
-    };
-
-    let encrypted_message =
-        EncryptionConfigurator::new(header, Cow::Borrowed(encryption_key), Some(aad.to_vec()))
-            .into_writer(Vec::new())?
-            .encrypt_ordinary_to_vec(initial_payload.unwrap_or(&[]))?;
-
-    // Create the `ClientKeyExchange` message.
-    Ok(HandshakeMessage::ClientKeyExchange {
-        encrypted_message,
-        encapsulated_key,
-    })
 }

@@ -1,5 +1,5 @@
 use super::{HandshakeServer, ProtocolSuite, Ready, SignaturePresence};
-use crate::protocol::transcript::Transcript;
+use crate::protocol::{state::ServerReady, transcript::Transcript};
 use seal_flow::crypto::prelude::*;
 use std::marker::PhantomData;
 
@@ -88,20 +88,14 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<ProtocolSuite<Sig>, Sig::Ser
     /// 构建 `HandshakeServer`。
     ///
     /// 此方法仅在提供了所有必需字段时可用。
-    pub fn build(self) -> HandshakeServer<Ready, Sig> {
+    pub fn build(self) -> HandshakeServer<Ready, ServerReady, Sig> {
         HandshakeServer {
             state: PhantomData,
+            state_data: ServerReady {},
             suite: self.suite,
             transcript: Transcript::new(),
             signature_key_pair: self.signature_key_pair,
-            kem_key_pair: None,
-            key_agreement_engine: None,
-            agreement_shared_secret: None,
-            encryption_key: None,
-            decryption_key: None,
-            master_secret: None,
             ticket_encryption_key: self.ticket_encryption_key,
-            resumption_master_secret: None,
         }
     }
 }

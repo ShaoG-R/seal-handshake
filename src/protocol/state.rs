@@ -4,35 +4,75 @@
 //! the protocol flow at compile time. Each state represents a specific point
 //! in the handshake process, and only valid transitions are exposed in the API.
 
+use crate::crypto::suite::KeyAgreementEngine;
+use seal_flow::crypto::{
+    keys::asymmetric::kem::{SharedSecret, TypedKemKeyPair},
+    prelude::TypedAeadKey,
+};
+
+// --- Generic States (Markers) ---
 /// The initial state of a handshake, client or server.
-///
-/// In this state, the handshake can be initiated.
-///
-/// 握手前的初始状态。
-///
-/// 在此状态下，可以发起握手。
 #[derive(Debug)]
 pub struct Ready;
 
-/// A client state indicating that it has sent a public key request
-/// and is now awaiting the server's public key.
-///
-/// 客户端状态，表示已发送公钥请求，正在等待服务端的公钥。
+/// A client state indicating that it is awaiting the server's public key.
 #[derive(Debug)]
 pub struct AwaitingKemPublicKey;
 
-/// Represents the server's `AwaitingKeyExchange` state.
-/// In this state, the server has sent its `ServerHello` and is waiting for the client's key exchange message.
+/// A server state indicating it is waiting for the client's key exchange message.
 #[derive(Debug)]
 pub struct AwaitingKeyExchange;
 
 /// The final state of a successful handshake.
-///
-/// In this state, both parties have a shared secret and can
-/// securely exchange encrypted application data.
-///
-/// 成功握手的最终状态。
-///
-/// 在此状态下，双方拥有共享密钥，可以安全地交换加密的应用数据。
 #[derive(Debug)]
 pub struct Established;
+
+// --- Role-Specific State Data ---
+
+// --- Client States ---
+/// Data held by the client in the `Ready` state.
+#[derive(Debug)]
+pub struct ClientReady {
+    pub resumption_master_secret: Option<SharedSecret>,
+    pub session_ticket_to_send: Option<Vec<u8>>,
+}
+
+/// Data held by the client in the `AwaitingKemPublicKey` state.
+#[derive(Debug)]
+pub struct ClientAwaitingKemPublicKey {
+    pub key_agreement_engine: Option<KeyAgreementEngine>,
+    pub resumption_master_secret: Option<SharedSecret>,
+}
+
+/// Data held by the client in the `Established` state.
+#[derive(Debug)]
+pub struct ClientEstablished {
+    pub encryption_key: TypedAeadKey,
+    pub decryption_key: TypedAeadKey,
+    pub master_secret: SharedSecret,
+    pub new_session_ticket: Option<Vec<u8>>,
+}
+
+// --- Server States ---
+/// Data held by the server in the `Ready` state.
+#[derive(Debug)]
+pub struct ServerReady {
+    // This state is currently empty for the server, but defined for consistency.
+}
+
+/// Data held by the server in the `AwaitingKeyExchange` state.
+#[derive(Debug)]
+pub struct ServerAwaitingKeyExchange {
+    pub kem_key_pair: TypedKemKeyPair,
+    pub key_agreement_engine: Option<KeyAgreementEngine>,
+    pub agreement_shared_secret: Option<SharedSecret>,
+    pub resumption_master_secret: Option<SharedSecret>,
+}
+
+/// Data held by the server in the `Established` state.
+#[derive(Debug)]
+pub struct ServerEstablished {
+    pub encryption_key: TypedAeadKey,
+    pub decryption_key: TypedAeadKey,
+    pub master_secret: SharedSecret,
+}

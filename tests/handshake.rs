@@ -9,9 +9,8 @@ use seal_flow::crypto::algorithms::{
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_handshake::crypto::suite::ProtocolSuiteBuilder;
 use seal_handshake::error::Result;
-use seal_handshake::handshake::client::HandshakeClient;
+use seal_handshake::handshake::client::HandshakeClientBuilder;
 use seal_handshake::handshake::server::HandshakeServer;
-use seal_handshake::protocol::message::HandshakeMessage;
 
 #[test]
 fn test_full_handshake_and_data_exchange() -> Result<()> {
@@ -43,7 +42,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
         .suite(suite.clone())
         .signature_key_pair(server_identity_key_pair)
         .build();
-    let client = HandshakeClient::builder()
+    let client = HandshakeClientBuilder::new()
         .suite(suite)
         .server_signature_public_key(server_identity_public_key)
         .build();
@@ -52,7 +51,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     println!("--- Starting handshake ---");
 
     // C -> S: ClientHello
-    let (client_hello, client) = client.start_handshake();
+    let (client_hello, client) = client.start()?;
     println!("C -> S: ClientHello");
 
     // S: Process ClientHello, create ServerHello
@@ -99,10 +98,7 @@ fn test_full_handshake_and_data_exchange() -> Result<()> {
     println!("S -> C: Sending encrypted response");
 
     // C: Decrypt application data
-    let server_finished_message = HandshakeMessage::ServerFinished {
-        encrypted_message: server_ciphertext,
-    };
-    let decrypted_server_message = client.decrypt(server_finished_message, Some(aad))?;
+    let decrypted_server_message = client.decrypt(&server_ciphertext, aad)?;
     println!(
         "C: Decrypted response: '{}'",
         String::from_utf8_lossy(&decrypted_server_message)
@@ -140,7 +136,7 @@ fn test_kem_only_handshake() -> Result<()> {
         .suite(suite.clone())
         .signature_key_pair(())
         .build();
-    let client = HandshakeClient::builder()
+    let client = HandshakeClientBuilder::new()
         .suite(suite)
         .server_signature_public_key(())
         .build();
@@ -149,7 +145,7 @@ fn test_kem_only_handshake() -> Result<()> {
     println!("--- Starting KEM-only handshake ---");
 
     // C -> S: ClientHello
-    let (client_hello, client) = client.start_handshake();
+    let (client_hello, client) = client.start()?;
     println!("C -> S: ClientHello");
 
     // S: Process ClientHello, create ServerHello
@@ -196,10 +192,7 @@ fn test_kem_only_handshake() -> Result<()> {
     println!("S -> C: Sending encrypted response");
 
     // C: Decrypt application data
-    let server_finished_message = HandshakeMessage::ServerFinished {
-        encrypted_message: server_ciphertext,
-    };
-    let decrypted_server_message = client.decrypt(server_finished_message, Some(aad))?;
+    let decrypted_server_message = client.decrypt(&server_ciphertext, aad)?;
     println!(
         "C: Decrypted response: '{}'",
         String::from_utf8_lossy(&decrypted_server_message)
@@ -243,12 +236,12 @@ fn test_handshake_with_resumption() -> Result<()> {
         .signature_key_pair(server_identity_key_pair.clone())
         .ticket_encryption_key(ticket_encryption_key.clone())
         .build();
-    let initial_client = HandshakeClient::builder()
+    let initial_client = HandshakeClientBuilder::new()
         .suite(suite.clone())
         .server_signature_public_key(server_identity_public_key.clone())
         .build();
 
-    let (client_hello, initial_client) = initial_client.start_handshake();
+    let (client_hello, initial_client) = initial_client.start()?;
     let (server_hello, initial_server) = initial_server.process_client_hello(client_hello)?;
     let (key_exchange, mut initial_client) =
         initial_client.process_server_hello(server_hello, None, None)?;
@@ -261,8 +254,8 @@ fn test_handshake_with_resumption() -> Result<()> {
     let ticket_message = initial_server.issue_session_ticket()?;
     initial_client.process_new_session_ticket(ticket_message)?;
 
-    let master_secret_for_resumption = initial_client.master_secret().cloned().unwrap();
-    let ticket_for_resumption = initial_client.session_ticket().cloned().unwrap();
+    let (master_secret_for_resumption, ticket_for_resumption) = initial_client.resumption_data();
+    let ticket_for_resumption = ticket_for_resumption.unwrap();
     println!("--- Client stored ticket and master secret for resumption ---");
 
     // --- 4. Second Handshake (with Resumption) ---
@@ -272,13 +265,13 @@ fn test_handshake_with_resumption() -> Result<()> {
         .signature_key_pair(server_identity_key_pair)
         .ticket_encryption_key(ticket_encryption_key)
         .build();
-    let resumption_client = HandshakeClient::builder()
+    let resumption_client = HandshakeClientBuilder::new()
         .suite(suite)
         .server_signature_public_key(server_identity_public_key)
         .resumption_data(master_secret_for_resumption, ticket_for_resumption)
         .build();
 
-    let (client_hello_resume, resumption_client) = resumption_client.start_handshake();
+    let (client_hello_resume, resumption_client) = resumption_client.start()?;
     let (server_hello_resume, resumption_server) =
         resumption_server.process_client_hello(client_hello_resume)?;
     let (key_exchange_resume, resumption_client) =

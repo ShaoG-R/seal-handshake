@@ -1,14 +1,19 @@
-use super::{AwaitingKeyExchange, Established, HandshakeServer, SignaturePresence};
-use crate::crypto::keys::{SessionKeysAndMaster, derive_session_keys};
+use super::{HandshakeServer, SignaturePresence};
+use crate::crypto::keys::{derive_session_keys, SessionKeysAndMaster};
+use crate::crypto::suite::ProtocolSuite;
 use crate::error::{HandshakeError, Result};
-use crate::protocol::message::{EncryptedHeader, HandshakeMessage};
+use crate::protocol::{
+    message::{EncryptedHeader, HandshakeMessage},
+    state::{AwaitingKeyExchange, Established, ServerAwaitingKeyExchange, ServerEstablished},
+};
+use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::{
     crypto::{prelude::*, traits::KemAlgorithmTrait},
     prelude::{PendingDecryption, prepare_decryption_from_slice},
 };
 use std::{borrow::Cow, marker::PhantomData};
 
-impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
+impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaitingKeyExchange, Sig> {
     /// Processes a `ClientKeyExchange` message.
     ///
     /// This method performs the core server-side key exchange:
@@ -27,41 +32,56 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, Sig> {
     /// 4. 使用派生的客户端到服务器密钥来解密初始负载。
     /// 5. 转换到 `Established` 状态，此时可以进行安全的应用数据交换。
     pub fn process_client_key_exchange(
-        mut self,
+        self,
         message: HandshakeMessage,
         aad: &[u8],
-    ) -> Result<(Vec<u8>, HandshakeServer<Established, Sig>)> {
-        self.transcript.update(&message);
+    ) -> Result<(Vec<u8>, HandshakeServer<Established, ServerEstablished, Sig>)> {
+        let HandshakeServer {
+            state: _,
+            state_data:
+                ServerAwaitingKeyExchange {
+                    kem_key_pair,
+                    agreement_shared_secret,
+                    resumption_master_secret,
+                    ..
+                },
+            mut transcript,
+            suite,
+            signature_key_pair,
+            ticket_encryption_key,
+        } = self;
+
+        transcript.update(&message);
 
         let (encrypted_message, encapsulated_key) = extract_client_key_exchange(&message)?;
 
-        let kem_key_pair = self
-            .kem_key_pair
-            .take()
-            .ok_or(HandshakeError::InvalidState)?;
+        let session_keys = derive_session_keys_from_client_exchange(
+            &suite,
+            agreement_shared_secret,
+            resumption_master_secret,
+            &kem_key_pair,
+            &encapsulated_key,
+        )?;
 
-        let pending_decryption =
-            prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message, None)?;
-
-        let session_keys =
-            derive_session_keys_from_client_exchange(&self, &kem_key_pair, &encapsulated_key)?;
-
-        let initial_payload =
-            decrypt_initial_payload(pending_decryption, &session_keys.decryption_key, aad)?;
+        let initial_payload = if encrypted_message.is_empty() {
+            vec![]
+        } else {
+            let pending_decryption =
+                prepare_decryption_from_slice::<EncryptedHeader>(&encrypted_message, None)?;
+            decrypt_initial_payload(pending_decryption, &session_keys.decryption_key, aad)?
+        };
 
         let established_server = HandshakeServer {
             state: PhantomData,
-            suite: self.suite,
-            transcript: self.transcript,
-            signature_key_pair: self.signature_key_pair,
-            kem_key_pair: None,
-            key_agreement_engine: self.key_agreement_engine,
-            agreement_shared_secret: None,
-            encryption_key: Some(session_keys.encryption_key),
-            decryption_key: Some(session_keys.decryption_key),
-            master_secret: Some(session_keys.master_secret),
-            ticket_encryption_key: self.ticket_encryption_key,
-            resumption_master_secret: None,
+            state_data: ServerEstablished {
+                encryption_key: session_keys.encryption_key,
+                decryption_key: session_keys.decryption_key,
+                master_secret: session_keys.master_secret,
+            },
+            suite,
+            transcript,
+            signature_key_pair,
+            ticket_encryption_key,
         };
 
         Ok((initial_payload, established_server))
@@ -81,7 +101,9 @@ fn extract_client_key_exchange(message: &HandshakeMessage) -> Result<(Vec<u8>, E
 
 /// Derives session keys from the client's key exchange data.
 fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
-    server: &HandshakeServer<AwaitingKeyExchange, Sig>,
+    suite: &ProtocolSuite<Sig>,
+    agreement_shared_secret: Option<SharedSecret>,
+    resumption_master_secret: Option<SharedSecret>,
     kem_key_pair: &TypedKemKeyPair,
     encapsulated_key: &EncapsulatedKey,
 ) -> Result<SessionKeysAndMaster> {
@@ -89,10 +111,10 @@ fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
     let shared_secret = kem.decapsulate_key(&kem_key_pair.private_key(), encapsulated_key)?;
 
     derive_session_keys(
-        &server.suite,
+        suite,
         shared_secret,
-        server.agreement_shared_secret.clone(),
-        server.resumption_master_secret.clone(),
+        agreement_shared_secret,
+        resumption_master_secret,
         false, // is_client = false
     )
 }

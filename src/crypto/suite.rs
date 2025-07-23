@@ -61,10 +61,6 @@ impl KeyAgreementEngine {
     pub fn public_key(&self) -> &TypedKeyAgreementPublicKey {
         self.key_pair.public_key()
     }
-
-    pub fn key_pair(&self) -> &TypedKeyAgreementKeyPair {
-        &self.key_pair
-    }
 }
 
 // --- Signature Presence Marker ---

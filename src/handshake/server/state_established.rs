@@ -1,8 +1,11 @@
-use super::{Established, HandshakeServer, SignaturePresence};
+use super::{HandshakeServer, SignaturePresence};
 use crate::bincode;
 use crate::crypto::suite::{WithSignature, WithoutSignature};
 use crate::error::{HandshakeError, Result};
-use crate::protocol::message::{EncryptedHeader, HandshakeMessage, KdfParams};
+use crate::protocol::{
+    message::{EncryptedHeader, HandshakeMessage, KdfParams},
+    state::{Established, ServerEstablished},
+};
 use seal_flow::{
     common::header::AeadParamsBuilder,
     crypto::{
@@ -12,7 +15,7 @@ use seal_flow::{
         wrappers::asymmetric::signature::SignatureWrapper,
     },
     prelude::{EncryptionConfigurator, prepare_decryption_from_slice},
-    rand::{TryRngCore, rngs::OsRng},
+    rand::{rngs::OsRng, TryRngCore},
 };
 use std::{
     borrow::Cow,
@@ -21,7 +24,7 @@ use std::{
 
 // --- `encrypt` and `decrypt` implementations ---
 
-impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
+impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig> {
     /// Issues a new session ticket for the client to use for resumption.
     ///
     /// This method can only be called after the handshake is established. It encrypts
@@ -36,10 +39,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
             .ticket_encryption_key
             .as_ref()
             .ok_or(HandshakeError::InvalidState)?;
-        let master_secret = self
-            .master_secret
-            .as_ref()
-            .ok_or(HandshakeError::InvalidState)?;
+        let master_secret = &self.state_data.master_secret;
 
         // Create the ticket with a 1-hour expiry.
         let expiry = SystemTime::now()
@@ -87,15 +87,12 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
     }
 }
 
-impl HandshakeServer<Established, WithSignature> {
+impl HandshakeServer<Established, ServerEstablished, WithSignature> {
     /// Encrypts data and signs the transcript when a signature scheme is configured.
     ///
     /// 当配置了签名方案时，加密数据并对握手记录进行签名。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
-        let key = self
-            .encryption_key
-            .as_ref()
-            .ok_or(HandshakeError::InvalidState)?;
+        let key = &self.state_data.encryption_key;
 
         // Sign the transcript.
         let signer = self.suite.signature();
@@ -115,15 +112,12 @@ impl HandshakeServer<Established, WithSignature> {
     }
 }
 
-impl HandshakeServer<Established, WithoutSignature> {
+impl HandshakeServer<Established, ServerEstablished, WithoutSignature> {
     /// Encrypts data without signing when no signature scheme is configured.
     ///
     /// 当未配置签名方案时，加密数据而不进行签名。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
-        let key = self
-            .encryption_key
-            .as_ref()
-            .ok_or(HandshakeError::InvalidState)?;
+        let key = &self.state_data.encryption_key;
 
         // Encrypt without a signature.
         common_encrypt(self, plaintext, aad, key, None, None, None)
@@ -134,7 +128,7 @@ impl HandshakeServer<Established, WithoutSignature> {
 ///
 /// 用于通用加密逻辑的辅助函数。
 fn common_encrypt<Sig: SignaturePresence>(
-    server: &HandshakeServer<Established, Sig>,
+    server: &HandshakeServer<Established, ServerEstablished, Sig>,
     plaintext: &[u8],
     aad: &[u8],
     key: &TypedAeadKey,
@@ -167,7 +161,7 @@ fn common_encrypt<Sig: SignaturePresence>(
         .map_err(Into::into)
 }
 
-impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
+impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig> {
     /// Decrypts application data from the client using the established client-to-server session key.
     ///
     /// This method is used to process secure data sent by the client after the handshake is complete.
@@ -176,10 +170,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, Sig> {
     ///
     /// 此方法用于处理握手完成后客户端发送的安全数据。
     pub fn decrypt(&self, ciphertext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
-        let key = self
-            .decryption_key
-            .as_ref()
-            .ok_or(HandshakeError::InvalidState)?;
+        let key = &self.state_data.decryption_key;
 
         // Prepare the decryption by parsing the header from the encrypted message.
         // For application data from the client, there is no transcript signature to verify,

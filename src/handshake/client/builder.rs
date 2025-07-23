@@ -1,4 +1,5 @@
 use super::{HandshakeClient, ProtocolSuite, Ready, SignaturePresence};
+use crate::protocol::state::ClientReady;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use std::marker::PhantomData;
 
@@ -91,19 +92,16 @@ impl<Sig: SignaturePresence> HandshakeClientBuilder<ProtocolSuite<Sig>, Sig::Cli
     /// 构建 `HandshakeClient`。
     ///
     /// 此方法仅在提供了所有必需字段时可用。
-    pub fn build(self) -> HandshakeClient<Ready, Sig> {
+    pub fn build(self) -> HandshakeClient<Ready, ClientReady, Sig> {
         HandshakeClient {
             state: PhantomData,
+            state_data: ClientReady {
+                resumption_master_secret: self.resumption_master_secret,
+                session_ticket_to_send: self.session_ticket,
+            },
             suite: self.suite,
             transcript: crate::protocol::transcript::Transcript::new(),
-            key_agreement_engine: None,
             server_signature_public_key: self.server_signature_public_key,
-            encryption_key: None,
-            decryption_key: None,
-            established_master_secret: None,
-            new_session_ticket: None,
-            resumption_master_secret: self.resumption_master_secret,
-            session_ticket_to_send: self.session_ticket,
         }
     }
 }
