@@ -38,6 +38,7 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
     ) -> Result<(Vec<u8>, HandshakeServer<Established, ServerEstablished, Sig>)> {
         let HandshakeServer {
             state: _,
+            preset_suite,
             state_data:
                 ServerAwaitingKeyExchange {
                     kem_key_pair,
@@ -75,6 +76,7 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
 
         let established_server = HandshakeServer {
             state: PhantomData,
+            preset_suite,
             state_data: ServerEstablished {
                 encryption_key: session_keys.encryption_key,
                 decryption_key: session_keys.decryption_key,

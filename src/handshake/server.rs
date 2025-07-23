@@ -38,6 +38,10 @@ pub struct HandshakeServer<S, StateData, Sig: SignaturePresence> {
     /// 零大小标记，用于持有当前状态 `S`。
     /// 它不占用空间，但允许类型系统跟踪机器的状态。
     state: PhantomData<S>,
+    /// The cryptographic suite used for the handshake.
+    ///
+    /// 握手过程中使用的密码套件。
+    preset_suite: Option<ProtocolSuite<Sig>>,
     /// The actual data associated with the current state.
     ///
     /// 与当前状态关联的实际数据。

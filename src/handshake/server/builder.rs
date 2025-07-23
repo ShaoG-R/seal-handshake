@@ -16,7 +16,7 @@ pub struct Missing;
 ///
 /// 此构建器确保在构造服务器之前提供了所有必需的字段。
 pub struct HandshakeServerBuilder<Suite, Key, Sig: SignaturePresence> {
-    suite: Suite,
+    preset_suite: Option<Suite>,
     signature_key_pair: Key,
     ticket_encryption_key: Option<TypedAeadKey>,
     _sig: PhantomData<Sig>,
@@ -26,7 +26,7 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<Missing, Missing, Sig> {
     /// Creates a new `HandshakeServerBuilder`.
     pub fn new() -> Self {
         Self {
-            suite: Missing,
+            preset_suite: None,
             signature_key_pair: Missing,
             ticket_encryption_key: None,
             _sig: PhantomData,
@@ -43,7 +43,7 @@ impl<S, K, Sig: SignaturePresence> HandshakeServerBuilder<S, K, Sig> {
         suite: ProtocolSuite<Sig>,
     ) -> HandshakeServerBuilder<ProtocolSuite<Sig>, K, Sig> {
         HandshakeServerBuilder {
-            suite,
+            preset_suite: Some(suite),
             signature_key_pair: self.signature_key_pair,
             ticket_encryption_key: self.ticket_encryption_key,
             _sig: PhantomData,
@@ -62,7 +62,7 @@ impl<S, K, Sig: SignaturePresence> HandshakeServerBuilder<S, K, Sig> {
         key_pair: Sig::ServerKey,
     ) -> HandshakeServerBuilder<S, Sig::ServerKey, Sig> {
         HandshakeServerBuilder {
-            suite: self.suite,
+            preset_suite: self.preset_suite,
             signature_key_pair: key_pair,
             ticket_encryption_key: self.ticket_encryption_key,
             _sig: PhantomData,
@@ -91,6 +91,7 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<ProtocolSuite<Sig>, Sig::Ser
     pub fn build(self) -> HandshakeServer<Ready, ServerReady, Sig> {
         HandshakeServer {
             state: PhantomData,
+            preset_suite: self.preset_suite,
             state_data: ServerReady {},
             transcript: Transcript::new(),
             signature_key_pair: self.signature_key_pair,

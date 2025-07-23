@@ -47,6 +47,7 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
     )> {
         let HandshakeServer {
             state: _,
+            preset_suite,
             state_data: _,
             mut transcript,
             signature_key_pair,
@@ -63,6 +64,18 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
                 aead_algorithm,
                 kdf_algorithm,
             } => {
+                if let Some(suite) = preset_suite.as_ref() {
+                    if suite.kem() != kem_algorithm {
+                        return Err(HandshakeError::InvalidKemAlgorithm);
+                    }
+                    if suite.aead() != aead_algorithm {
+                        return Err(HandshakeError::InvalidAeadAlgorithm);
+                    }
+                    if suite.kdf() != kdf_algorithm {
+                        return Err(HandshakeError::InvalidKdfAlgorithm);
+                    }
+                }
+
                 (
                     key_agreement_public_key,
                     try_decode_ticket(ticket_encryption_key.as_ref(), session_ticket)?,
@@ -107,6 +120,7 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
 
         let next_server = HandshakeServer {
             state: PhantomData,
+            preset_suite,
             state_data: ServerAwaitingKeyExchange {
                 kem_key_pair,
                 key_agreement_engine,
@@ -141,6 +155,7 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
     )> {
         let HandshakeServer {
             state: _,
+            preset_suite,
             state_data: _,
             mut transcript,
             signature_key_pair,
@@ -157,7 +172,17 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
                 aead_algorithm,
                 kdf_algorithm,
             } => {
-                
+                if let Some(suite) = preset_suite.as_ref() {
+                    if suite.kem() != kem_algorithm {
+                        return Err(HandshakeError::InvalidKemAlgorithm);
+                    }
+                    if suite.aead() != aead_algorithm {
+                        return Err(HandshakeError::InvalidAeadAlgorithm);
+                    }
+                    if suite.kdf() != kdf_algorithm {
+                        return Err(HandshakeError::InvalidKdfAlgorithm);
+                    }
+                }
                 (
                     key_agreement_public_key,
                     try_decode_ticket(ticket_encryption_key.as_ref(), session_ticket)?,
@@ -194,6 +219,7 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
 
         let next_server = HandshakeServer {
             state: PhantomData,
+            preset_suite,
             state_data: ServerAwaitingKeyExchange {
                 kem_key_pair,
                 key_agreement_engine,
