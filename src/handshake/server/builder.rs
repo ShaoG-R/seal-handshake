@@ -15,14 +15,14 @@ pub struct Missing;
 /// 用于创建 `HandshakeServer` 的构建器。
 ///
 /// 此构建器确保在构造服务器之前提供了所有必需的字段。
-pub struct HandshakeServerBuilder<Suite, Key, Sig: SignaturePresence> {
-    preset_suite: Option<Suite>,
+pub struct HandshakeServerBuilder<Key, Sig: SignaturePresence> {
+    preset_suite: Option<ProtocolSuite<Sig>>,
     signature_key_pair: Key,
     ticket_encryption_key: Option<TypedAeadKey>,
     _sig: PhantomData<Sig>,
 }
 
-impl<Sig: SignaturePresence> HandshakeServerBuilder<Missing, Missing, Sig> {
+impl<Sig: SignaturePresence> HandshakeServerBuilder<Missing, Sig> {
     /// Creates a new `HandshakeServerBuilder`.
     pub fn new() -> Self {
         Self {
@@ -34,20 +34,15 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<Missing, Missing, Sig> {
     }
 }
 
-impl<S, K, Sig: SignaturePresence> HandshakeServerBuilder<S, K, Sig> {
+impl<K, Sig: SignaturePresence> HandshakeServerBuilder<K, Sig> {
     /// Sets the protocol suite for the handshake.
+    /// If not set, the server will dynamically negotiate algorithms with the client.
     ///
     /// 设置握手所用的协议套件。
-    pub fn suite(
-        self,
-        suite: ProtocolSuite<Sig>,
-    ) -> HandshakeServerBuilder<ProtocolSuite<Sig>, K, Sig> {
-        HandshakeServerBuilder {
-            preset_suite: Some(suite),
-            signature_key_pair: self.signature_key_pair,
-            ticket_encryption_key: self.ticket_encryption_key,
-            _sig: PhantomData,
-        }
+    /// 如果未设置，服务器将与客户端动态协商算法。
+    pub fn suite(mut self, suite: ProtocolSuite<Sig>) -> Self {
+        self.preset_suite = Some(suite);
+        self
     }
 
     /// Sets the server's long-term identity key pair for signing.
@@ -60,7 +55,7 @@ impl<S, K, Sig: SignaturePresence> HandshakeServerBuilder<S, K, Sig> {
     pub fn signature_key_pair(
         self,
         key_pair: Sig::ServerKey,
-    ) -> HandshakeServerBuilder<S, Sig::ServerKey, Sig> {
+    ) -> HandshakeServerBuilder<Sig::ServerKey, Sig> {
         HandshakeServerBuilder {
             preset_suite: self.preset_suite,
             signature_key_pair: key_pair,
@@ -80,7 +75,7 @@ impl<S, K, Sig: SignaturePresence> HandshakeServerBuilder<S, K, Sig> {
     }
 }
 
-impl<Sig: SignaturePresence> HandshakeServerBuilder<ProtocolSuite<Sig>, Sig::ServerKey, Sig> {
+impl<Sig: SignaturePresence> HandshakeServerBuilder<Sig::ServerKey, Sig> {
     /// Builds the `HandshakeServer`.
     ///
     /// This method is only available when all required fields have been provided.

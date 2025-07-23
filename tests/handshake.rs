@@ -7,7 +7,7 @@ use seal_flow::crypto::algorithms::{
     kdf::key::KdfKeyAlgorithm,
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
-use seal_handshake::crypto::suite::ProtocolSuiteBuilder;
+use seal_handshake::crypto::suite::{ProtocolSuiteBuilder, WithSignature};
 use seal_handshake::error::Result;
 use seal_handshake::handshake::client::HandshakeClientBuilder;
 use seal_handshake::handshake::server::HandshakeServer;
@@ -289,6 +289,99 @@ fn test_handshake_with_resumption() -> Result<()> {
     assert_eq!(client_message, &decrypted[..]);
 
     println!("--- Data exchange after resumption successful ---");
+
+    Ok(())
+}
+
+#[test]
+fn test_handshake_without_preset_suite() -> Result<()> {
+    // --- 1. Setup ---
+    println!("--- Setting up for handshake without preset server suite ---");
+    let kem = KemAlgorithm::build().kyber1024();
+    let signature_algorithm = SignatureAlgorithm::build().dilithium5();
+    let aead = AeadAlgorithm::build().aes256_gcm();
+    let kdf = KdfKeyAlgorithm::build().hkdf_sha256();
+
+    let server_identity_key_pair = signature_algorithm.into_wrapper().generate_keypair()?;
+    let server_identity_public_key = server_identity_key_pair.public_key().clone();
+
+    // --- 2. Client Suite Initialization ---
+    // The client still needs a suite to propose to the server.
+    println!("--- Initializing client protocol suite ---");
+    let suite = ProtocolSuiteBuilder::new()
+        .with_kem(kem, None)
+        .with_signature(signature_algorithm)
+        .with_aead(aead)
+        .with_kdf(kdf)
+        .build();
+
+    // --- 3. Server and Client Initialization ---
+    println!("--- Initializing server (without preset suite) and client ---");
+
+    // SERVER: Build without a preset suite.
+    let server = HandshakeServer::<_, _, WithSignature>::builder()
+        .signature_key_pair(server_identity_key_pair)
+        .build();
+
+    // CLIENT: Build with the suite to propose.
+    let client = HandshakeClientBuilder::new()
+        .suite(suite)
+        .server_signature_public_key(server_identity_public_key)
+        .build();
+
+    // --- 4. Handshake ---
+    println!("--- Starting handshake (dynamic negotiation) ---");
+
+    // C -> S: ClientHello
+    let (client_hello, client) = client.start()?;
+    println!("C -> S: ClientHello");
+
+    // S: Process ClientHello, create ServerHello
+    // Server should accept the client's proposed algorithms.
+    let (server_hello, server) = server.process_client_hello(client_hello)?;
+    println!("S -> C: ServerHello (with signature)");
+
+    // C: Process ServerHello, create ClientKeyExchange
+    let initial_payload = b"client's initial data";
+    let aad = b"dynamic handshake aad";
+    let (client_key_exchange, client) =
+        client.process_server_hello(server_hello, Some(initial_payload), Some(aad))?;
+    println!("C -> S: ClientKeyExchange (with encrypted initial payload)");
+
+    // S: Process ClientKeyExchange, establish session
+    let (decrypted_payload, server) =
+        server.process_client_key_exchange(client_key_exchange, aad)?;
+    println!(
+        "S: Decrypted initial payload: '{}'",
+        String::from_utf8_lossy(&decrypted_payload)
+    );
+    assert_eq!(initial_payload, &decrypted_payload[..]);
+    println!("--- Handshake successful, session established ---");
+
+    // --- 5. Post-Handshake Data Exchange ---
+    println!("--- Testing post-handshake data exchange ---");
+
+    // C -> S
+    let client_message = b"data from client";
+    let client_ciphertext = client.encrypt(client_message, aad)?;
+    let decrypted_client_message = server.decrypt(&client_ciphertext, aad)?;
+    assert_eq!(client_message, &decrypted_client_message[..]);
+    println!(
+        "S: Decrypted message: '{}'",
+        String::from_utf8_lossy(&decrypted_client_message)
+    );
+
+    // S -> C
+    let server_message = b"response from server";
+    let server_ciphertext = server.encrypt(server_message, aad)?;
+    let decrypted_server_message = client.decrypt(&server_ciphertext, aad)?;
+    assert_eq!(server_message, &decrypted_server_message[..]);
+    println!(
+        "C: Decrypted response: '{}'",
+        String::from_utf8_lossy(&decrypted_server_message)
+    );
+
+    println!("--- Data exchange successful ---");
 
     Ok(())
 }

@@ -24,7 +24,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Ready, ServerReady, Sig> {
     /// Creates a new `HandshakeServerBuilder` to construct a `HandshakeServer`.
     ///
     /// 在 `Ready` 状态下创建一个新的 `HandshakeServer` 的构建器。
-    pub fn builder() -> HandshakeServerBuilder<Missing, Missing, Sig> {
+    pub fn builder() -> HandshakeServerBuilder<Missing, Sig> {
         HandshakeServerBuilder::new()
     }
 }
