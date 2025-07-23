@@ -11,7 +11,7 @@ use seal_flow::{
     crypto::{
         algorithms::asymmetric::signature::SignatureAlgorithm,
         prelude::*,
-        traits::{AeadAlgorithmTrait, KdfKeyAlgorithmTrait, SignatureAlgorithmTrait},
+        traits::SignatureAlgorithmTrait,
         wrappers::asymmetric::signature::SignatureWrapper,
     },
     prelude::{EncryptionConfigurator, prepare_decryption_from_slice},
@@ -59,7 +59,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig
         // Encrypt the ticket using the server's TEK.
         // We use the AEAD algorithm from the current suite for consistency.
         let aead = self.suite.aead();
-        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+        let params = AeadParamsBuilder::new(aead, 4096)
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
 
@@ -67,7 +67,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig
             params,
             // These fields are not relevant for ticket encryption but are part of the struct.
             kdf_params: KdfParams {
-                algorithm: self.suite.kdf().algorithm(),
+                algorithm: self.suite.kdf(),
                 salt: None,
                 info: None,
             },
@@ -137,13 +137,13 @@ fn common_encrypt<Sig: SignaturePresence>(
     transcript_signature: Option<SignatureWrapper>,
 ) -> Result<Vec<u8>> {
     let aead = server.suite.aead();
-    let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+    let params = AeadParamsBuilder::new(aead, 4096)
         .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
         .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
         .build();
 
     let kdf_params = KdfParams {
-        algorithm: server.suite.kdf().algorithm(),
+        algorithm: server.suite.kdf(),
         salt: Some(b"seal-handshake-salt".to_vec()),
         info: Some(b"seal-handshake-s2c".to_vec()),
     };

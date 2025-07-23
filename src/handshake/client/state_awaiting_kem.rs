@@ -12,7 +12,7 @@ use seal_flow::{
     common::header::AeadParamsBuilder,
     crypto::{
         prelude::*,
-        traits::{AeadAlgorithmTrait, KdfKeyAlgorithmTrait, KemAlgorithmTrait},
+        traits::{KemAlgorithmTrait},
         wrappers::asymmetric::signature::SignatureWrapper,
     },
     prelude::EncryptionConfigurator,
@@ -131,13 +131,13 @@ fn complete_server_hello_processing<S: SignaturePresence>(
     let encrypted_message = if let Some(plaintext) = initial_payload {
         let aad = aad.unwrap_or_default();
         let kdf_params = KdfParams {
-            algorithm: client.suite.kdf().algorithm(),
+            algorithm: client.suite.kdf(),
             salt: Some(b"seal-handshake-salt".to_vec()),
             info: Some(b"seal-handshake-c2s".to_vec()),
         };
 
         let aead = client.suite.aead();
-        let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+        let params = AeadParamsBuilder::new(aead, 4096)
             .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
@@ -200,7 +200,7 @@ fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
     server_kem_pk: TypedKemPublicKey,
     server_key_agreement_pk: Option<TypedKeyAgreementPublicKey>,
 ) -> Result<(SessionKeysAndMaster, EncapsulatedKey)> {
-    let kem = client.suite.kem();
+    let kem = client.suite.kem_wrapper();
 
     // KEM: Encapsulate a new shared secret against the server's public KEM key.
     let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;

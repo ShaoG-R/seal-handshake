@@ -12,7 +12,6 @@ use seal_flow::{
     crypto::{
         keys::asymmetric::kem::SharedSecret,
         prelude::*,
-        traits::{AeadAlgorithmTrait, KdfKeyAlgorithmTrait},
     },
     prelude::{prepare_decryption_from_slice, EncryptionConfigurator},
     rand::{rngs::OsRng, TryRngCore},
@@ -125,14 +124,13 @@ fn common_encrypt<S: SignaturePresence>(
     plaintext: &[u8],
     aad: &[u8],
 ) -> Result<Vec<u8>> {
-    let aead = suite.aead();
-    let params = AeadParamsBuilder::new(aead.algorithm(), 4096)
+    let params = AeadParamsBuilder::new(suite.aead(), 4096)
         .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
         .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
         .build();
 
     let kdf_params = KdfParams {
-        algorithm: suite.kdf().algorithm(),
+        algorithm: suite.kdf(),
         salt: Some(b"seal-handshake-salt".to_vec()),
         info: Some(b"seal-handshake-c2s".to_vec()),
     };

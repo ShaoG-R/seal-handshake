@@ -1,17 +1,16 @@
 use seal_flow::crypto::{
-    keys::asymmetric::{
+    algorithms::{asymmetric::{kem::KemAlgorithm, key_agreement::KeyAgreementAlgorithm}, kdf::key::KdfKeyAlgorithm}, keys::asymmetric::{
         kem::SharedSecret,
         key_agreement::{TypedKeyAgreementKeyPair, TypedKeyAgreementPublicKey},
         signature::{TypedSignatureKeyPair, TypedSignaturePublicKey},
-    },
-    wrappers::{
+    }, prelude::AeadAlgorithm, wrappers::{
         aead::AeadAlgorithmWrapper,
         asymmetric::{
             kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper,
             signature::SignatureAlgorithmWrapper,
         },
         kdf::key::KdfKeyWrapper,
-    },
+    }
 };
 use std::marker::PhantomData;
 
@@ -118,28 +117,44 @@ impl SignaturePresence for WithoutSignature {
 // --- Final ProtocolSuite ---
 #[derive(Debug, Clone)]
 pub struct ProtocolSuite<S: SignaturePresence> {
-    kem: KemAlgorithmWrapper,
-    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    kem: KemAlgorithm,
+    key_agreement: Option<KeyAgreementAlgorithm>,
     signature: S,
-    aead: AeadAlgorithmWrapper,
-    kdf: KdfKeyWrapper,
+    aead: AeadAlgorithm,
+    kdf: KdfKeyAlgorithm,
 }
 
 impl<S: SignaturePresence> ProtocolSuite<S> {
-    pub fn kem(&self) -> &KemAlgorithmWrapper {
-        &self.kem
+    pub fn kem(&self) -> KemAlgorithm {
+        self.kem
     }
 
-    pub fn key_agreement(&self) -> &Option<KeyAgreementAlgorithmWrapper> {
-        &self.key_agreement
+    pub fn kem_wrapper(&self) -> KemAlgorithmWrapper {
+        self.kem.into_wrapper()
     }
 
-    pub fn aead(&self) -> &AeadAlgorithmWrapper {
-        &self.aead
+    pub fn key_agreement(&self) -> Option<KeyAgreementAlgorithm> {
+        self.key_agreement
     }
 
-    pub fn kdf(&self) -> &KdfKeyWrapper {
-        &self.kdf
+    pub fn key_agreement_wrapper(&self) -> Option<KeyAgreementAlgorithmWrapper> {
+        self.key_agreement.as_ref().map(|a| a.into_wrapper())
+    }
+
+    pub fn aead(&self) -> AeadAlgorithm {
+        self.aead
+    }
+
+    pub fn aead_wrapper(&self) -> AeadAlgorithmWrapper {
+        self.aead.into_wrapper()
+    }
+
+    pub fn kdf(&self) -> KdfKeyAlgorithm {
+        self.kdf
+    }
+
+    pub fn kdf_wrapper(&self) -> KdfKeyWrapper {
+        self.kdf.into_wrapper()
     }
 }
 
@@ -163,8 +178,8 @@ impl ProtocolSuiteBuilder {
     /// Sets the KEM and optional key agreement algorithm, moving to the next state.
     pub fn with_kem(
         self,
-        kem: KemAlgorithmWrapper,
-        key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+        kem: KemAlgorithm,
+        key_agreement: Option<KeyAgreementAlgorithm>,
     ) -> BuilderWithKem {
         BuilderWithKem { kem, key_agreement }
     }
@@ -172,8 +187,8 @@ impl ProtocolSuiteBuilder {
 
 /// State after KEM configuration is set. Requires Signature.
 pub struct BuilderWithKem {
-    kem: KemAlgorithmWrapper,
-    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    kem: KemAlgorithm,
+    key_agreement: Option<KeyAgreementAlgorithm>,
 }
 
 impl BuilderWithKem {
@@ -201,14 +216,14 @@ impl BuilderWithKem {
 
 /// State after asymmetric algorithms are set. Requires AEAD.
 pub struct BuilderWithAlgorithms<S: SignaturePresence> {
-    kem: KemAlgorithmWrapper,
+    kem: KemAlgorithm,
     signature: S,
-    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
+    key_agreement: Option<KeyAgreementAlgorithm>,
 }
 
 impl<S: SignaturePresence> BuilderWithAlgorithms<S> {
     /// Sets the AEAD algorithm and moves to the next state.
-    pub fn with_aead(self, aead: AeadAlgorithmWrapper) -> BuilderWithAead<S> {
+    pub fn with_aead(self, aead: AeadAlgorithm) -> BuilderWithAead<S> {
         BuilderWithAead {
             kem: self.kem,
             signature: self.signature,
@@ -220,15 +235,15 @@ impl<S: SignaturePresence> BuilderWithAlgorithms<S> {
 
 /// State after AEAD is set. Requires KDF.
 pub struct BuilderWithAead<S: SignaturePresence> {
-    kem: KemAlgorithmWrapper,
+    kem: KemAlgorithm,
     signature: S,
-    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    aead: AeadAlgorithmWrapper,
+    key_agreement: Option<KeyAgreementAlgorithm>,
+    aead: AeadAlgorithm,
 }
 
 impl<S: SignaturePresence> BuilderWithAead<S> {
     /// Sets the KDF algorithm and moves to the final, buildable state.
-    pub fn with_kdf(self, kdf: KdfKeyWrapper) -> ReadyToBuild<S> {
+    pub fn with_kdf(self, kdf: KdfKeyAlgorithm) -> ReadyToBuild<S> {
         ReadyToBuild {
             kem: self.kem,
             signature: self.signature,
@@ -242,11 +257,11 @@ impl<S: SignaturePresence> BuilderWithAead<S> {
 
 /// The final state where the builder can construct a `ProtocolSuite`.
 pub struct ReadyToBuild<S: SignaturePresence> {
-    kem: KemAlgorithmWrapper,
+    kem: KemAlgorithm,
     signature: S,
-    key_agreement: Option<KeyAgreementAlgorithmWrapper>,
-    aead: AeadAlgorithmWrapper,
-    kdf: KdfKeyWrapper,
+    key_agreement: Option<KeyAgreementAlgorithm>,
+    aead: AeadAlgorithm,
+    kdf: KdfKeyAlgorithm,
     _phantom: PhantomData<S>,
 }
 

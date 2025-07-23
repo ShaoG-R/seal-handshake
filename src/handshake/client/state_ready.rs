@@ -27,15 +27,15 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, ClientReady, Sig> {
         } = self;
 
         // If key agreement is supported, generate ephemeral keys for it.
-        let key_agreement_engine = KeyAgreementEngine::new_for_client(suite.key_agreement().as_ref())?;
+        let key_agreement_engine = KeyAgreementEngine::new_for_client(suite.key_agreement_wrapper().as_ref())?;
         let key_agreement_public_key = key_agreement_engine.as_ref().map(|e| e.public_key().clone());
 
         let client_hello = HandshakeMessage::ClientHello {
-            kem_algorithm: suite.kem().algorithm(),
+            kem_algorithm: suite.kem(),
             key_agreement_public_key,
             session_ticket: state_data.session_ticket_to_send,
-            aead_algorithm: suite.aead().algorithm(),
-            kdf_algorithm: suite.kdf().algorithm(),
+            aead_algorithm: suite.aead(),
+            kdf_algorithm: suite.kdf(),
         };
 
         transcript.update(&client_hello);

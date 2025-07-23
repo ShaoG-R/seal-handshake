@@ -64,13 +64,13 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
                 aead_algorithm,
                 kdf_algorithm,
             } => {
-                if kem_algorithm != suite.kem().algorithm() {
+                if kem_algorithm != suite.kem() {
                     return Err(HandshakeError::InvalidKemAlgorithm);
                 }
-                if aead_algorithm != suite.aead().algorithm() {
+                if aead_algorithm != suite.aead() {
                     return Err(HandshakeError::InvalidAeadAlgorithm);
                 }
-                if kdf_algorithm != suite.kdf().algorithm() {
+                if kdf_algorithm != suite.kdf() {
                     return Err(HandshakeError::InvalidKdfAlgorithm);
                 }
                 (
@@ -83,13 +83,13 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
 
         // KEM key generation
         let kem = suite.kem();
-        let kem_key_pair = kem.generate_keypair()?;
+        let kem_key_pair = kem.into_wrapper().generate_keypair()?;
         let kem_public_key = kem_key_pair.public_key().clone();
 
         // Key Agreement
         let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) ={
             if let Some((engine, secret)) =
-                KeyAgreementEngine::new_for_server(suite.key_agreement().as_ref(), client_key_agreement_pk.as_ref())?
+                KeyAgreementEngine::new_for_server(suite.key_agreement_wrapper().as_ref(), client_key_agreement_pk.as_ref())?
             {
                 let pk = engine.public_key().clone();
                 (Some(engine), Some(secret), Some(pk))
@@ -167,13 +167,13 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
                 aead_algorithm,
                 kdf_algorithm,
             } => {
-                if kem_algorithm != suite.kem().algorithm() {
+                if kem_algorithm != suite.kem() {
                     return Err(HandshakeError::InvalidKemAlgorithm);
                 }
-                if aead_algorithm != suite.aead().algorithm() {
+                if aead_algorithm != suite.aead() {
                     return Err(HandshakeError::InvalidAeadAlgorithm);
                 }
-                if kdf_algorithm != suite.kdf().algorithm() {
+                if kdf_algorithm != suite.kdf() {
                     return Err(HandshakeError::InvalidKdfAlgorithm);
                 }
                 (
@@ -186,13 +186,13 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
 
         // KEM key generation
         let kem = suite.kem();
-        let kem_key_pair = kem.generate_keypair()?;
+        let kem_key_pair = kem.into_wrapper().generate_keypair()?;
         let kem_public_key = kem_key_pair.public_key().clone();
 
         // Key Agreement
         let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) =
             if let Some((engine, secret)) =
-                KeyAgreementEngine::new_for_server(suite.key_agreement().as_ref(), client_key_agreement_pk.as_ref())?
+                KeyAgreementEngine::new_for_server(suite.key_agreement_wrapper().as_ref(), client_key_agreement_pk.as_ref())?
             {
                 let pk = engine.public_key().clone();
                 (Some(engine), Some(secret), Some(pk))

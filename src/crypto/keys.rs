@@ -13,7 +13,6 @@ use crate::crypto::suite::{ProtocolSuite, SignaturePresence};
 use crate::error::Result;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::*;
-use seal_flow::crypto::traits::AeadAlgorithmTrait;
 
 /// Holds the derived keys and the master secret for an established session.
 ///
@@ -66,12 +65,12 @@ pub fn derive_session_keys<S: SignaturePresence>(
     };
 
     let kdf = suite.kdf();
-    let aead_algo = suite.aead().algorithm();
+    let aead_algo = suite.aead();
     let salt = Some(b"seal-handshake-salt".as_ref());
 
     // 3. Derive the new master secret.
     // 3. 派生新的主密钥。
-    let raw_master_secret = kdf.derive(
+    let raw_master_secret = kdf.into_wrapper().derive(
         &master_kdf_input,
         salt,
         Some(b"seal-handshake-master"), // "master" context
@@ -82,19 +81,19 @@ pub fn derive_session_keys<S: SignaturePresence>(
     // 4. Derive client-to-server key from the new master secret.
     // 4. 从新的主密钥派生客户端到服务器的密钥。
     let c2s_key = master_secret.derive_key(
-        kdf.algorithm(),
+        kdf.clone(),
         salt,
         Some(b"seal-handshake-c2s"), // "c2s" context
-        aead_algo,
+        aead_algo.clone(),
     )?;
 
     // 5. Derive server-to-client key from the new master secret.
     // 5. 从新的主密钥派生服务器到客户端的密钥。
     let s2c_key = master_secret.derive_key(
-        kdf.algorithm(),
+        kdf.clone(),
         salt,
         Some(b"seal-handshake-s2c"), // "s2c" context
-        aead_algo,
+        aead_algo.clone(),
     )?;
 
     // 6. Assign encryption/decryption keys based on the role.
