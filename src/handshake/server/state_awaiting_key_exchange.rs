@@ -43,10 +43,11 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
                     kem_key_pair,
                     agreement_shared_secret,
                     resumption_master_secret,
+                    aead_algorithm,
+                    kdf_algorithm,
                     ..
                 },
             mut transcript,
-            suite,
             signature_key_pair,
             ticket_encryption_key,
         } = self;
@@ -60,8 +61,8 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
             resumption_master_secret,
             &kem_key_pair,
             &encapsulated_key,
-            suite.kdf(),
-            suite.aead(),
+            kdf_algorithm,
+            aead_algorithm,
         )?;
 
         let initial_payload = if encrypted_message.is_empty() {
@@ -78,8 +79,9 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
                 encryption_key: session_keys.encryption_key,
                 decryption_key: session_keys.decryption_key,
                 master_secret: session_keys.master_secret,
+                aead_algorithm,
+                kdf_algorithm,
             },
-            suite,
             transcript,
             signature_key_pair,
             ticket_encryption_key,

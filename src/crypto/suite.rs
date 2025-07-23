@@ -3,7 +3,7 @@ use seal_flow::crypto::{
         kem::SharedSecret,
         key_agreement::{TypedKeyAgreementKeyPair, TypedKeyAgreementPublicKey},
         signature::{TypedSignatureKeyPair, TypedSignaturePublicKey},
-    }, prelude::AeadAlgorithm, wrappers::{
+    }, prelude::{AeadAlgorithm, TypedAsymmetricKeyTrait}, wrappers::{
         aead::AeadAlgorithmWrapper,
         asymmetric::{
             kem::KemAlgorithmWrapper, key_agreement::KeyAgreementAlgorithmWrapper,
@@ -39,10 +39,10 @@ impl KeyAgreementEngine {
     /// 为服务器创建一个新的引擎，生成一个临时的密钥对，
     /// 并与客户端的公钥计算共享密钥。
     pub fn new_for_server(
-        wrapper: Option<&KeyAgreementAlgorithmWrapper>,
         client_pk: Option<&TypedKeyAgreementPublicKey>,
     ) -> crate::error::Result<Option<(Self, SharedSecret)>> {
-        if let (Some(wrapper), Some(client_pk)) = (wrapper, client_pk) {
+        if let Some(client_pk) = client_pk {
+            let wrapper = client_pk.algorithm().into_wrapper();
             let key_pair = wrapper.generate_keypair()?;
             let shared_secret = wrapper.agree(&key_pair.private_key(), client_pk)?;
             let engine = Self {

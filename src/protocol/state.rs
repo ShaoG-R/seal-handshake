@@ -6,6 +6,7 @@
 
 use crate::crypto::suite::KeyAgreementEngine;
 use seal_flow::crypto::{
+    algorithms::{aead::AeadAlgorithm, kdf::key::KdfKeyAlgorithm},
     keys::asymmetric::kem::{SharedSecret, TypedKemKeyPair},
     prelude::TypedAeadKey,
 };
@@ -67,6 +68,8 @@ pub struct ServerAwaitingKeyExchange {
     pub key_agreement_engine: Option<KeyAgreementEngine>,
     pub agreement_shared_secret: Option<SharedSecret>,
     pub resumption_master_secret: Option<SharedSecret>,
+    pub aead_algorithm: AeadAlgorithm,
+    pub kdf_algorithm: KdfKeyAlgorithm,
 }
 
 /// Data held by the server in the `Established` state.
@@ -75,4 +78,8 @@ pub struct ServerEstablished {
     pub encryption_key: TypedAeadKey,
     pub decryption_key: TypedAeadKey,
     pub master_secret: SharedSecret,
+
+    
+    pub aead_algorithm: AeadAlgorithm,
+    pub kdf_algorithm: KdfKeyAlgorithm,
 }

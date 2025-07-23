@@ -58,7 +58,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig
 
         // Encrypt the ticket using the server's TEK.
         // We use the AEAD algorithm from the current suite for consistency.
-        let aead = self.suite.aead();
+        let aead = self.state_data.aead_algorithm;
         let params = AeadParamsBuilder::new(aead, 4096)
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
@@ -67,7 +67,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig
             params,
             // These fields are not relevant for ticket encryption but are part of the struct.
             kdf_params: KdfParams {
-                algorithm: self.suite.kdf(),
+                algorithm: self.state_data.kdf_algorithm,
                 salt: None,
                 info: None,
             },
@@ -95,7 +95,7 @@ impl HandshakeServer<Established, ServerEstablished, WithSignature> {
         let key = &self.state_data.encryption_key;
 
         // Sign the transcript.
-        let signer = self.suite.signature();
+        let signer = self.signature_key_pair.get_algorithm();
         let transcript_hash = self.transcript.current_hash();
         let signature = signer.into_wrapper().sign(&transcript_hash, &self.signature_key_pair.private_key())?;
 
@@ -136,14 +136,14 @@ fn common_encrypt<Sig: SignaturePresence>(
     signed_transcript_hash: Option<Vec<u8>>,
     transcript_signature: Option<SignatureWrapper>,
 ) -> Result<Vec<u8>> {
-    let aead = server.suite.aead();
+    let aead = server.state_data.aead_algorithm;
     let params = AeadParamsBuilder::new(aead, 4096)
         .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
         .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
         .build();
 
     let kdf_params = KdfParams {
-        algorithm: server.suite.kdf(),
+        algorithm: server.state_data.kdf_algorithm,
         salt: Some(b"seal-handshake-salt".to_vec()),
         info: Some(b"seal-handshake-s2c".to_vec()),
     };

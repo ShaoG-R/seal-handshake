@@ -38,10 +38,8 @@ impl HandshakeClient<AwaitingKemPublicKey, ClientAwaitingKemPublicKey, WithSigna
             common_server_hello_processing(&self.transcript, &message)?;
 
         // Verify the signature.
-        let verifier = self.suite.signature();
         let sig_to_verify = signature.ok_or(HandshakeError::InvalidSignature)?;
         verify_ephemeral_keys(
-            verifier,
             &server_kem_pk,
             &server_key_agreement_pk,
             &sig_to_verify,

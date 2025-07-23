@@ -92,7 +92,6 @@ impl<Sig: SignaturePresence> HandshakeServerBuilder<ProtocolSuite<Sig>, Sig::Ser
         HandshakeServer {
             state: PhantomData,
             state_data: ServerReady {},
-            suite: self.suite,
             transcript: Transcript::new(),
             signature_key_pair: self.signature_key_pair,
             ticket_encryption_key: self.ticket_encryption_key,

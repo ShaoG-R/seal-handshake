@@ -42,12 +42,6 @@ pub struct HandshakeServer<S, StateData, Sig: SignaturePresence> {
     ///
     /// 与当前状态关联的实际数据。
     state_data: StateData,
-    /// The cryptographic suite used for the handshake.
-    /// This defines the set of algorithms (KEM, AEAD, KDF, etc.) to be used.
-    ///
-    /// 握手过程中使用的密码套件。
-    /// 这定义了要使用的算法集（KEM、AEAD、KDF 等）。
-    suite: ProtocolSuite<Sig>,
     /// A running hash of the handshake transcript for integrity checks.
     /// It accumulates all messages exchanged, and its final hash is signed by the server.
     ///

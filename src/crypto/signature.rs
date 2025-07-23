@@ -10,7 +10,7 @@
 
 use crate::error::{HandshakeError, Result};
 use seal_flow::crypto::{
-    algorithms::asymmetric::signature::SignatureAlgorithm, bincode, prelude::*, traits::SignatureAlgorithmTrait, wrappers::asymmetric::signature::SignatureWrapper
+    bincode, prelude::*, traits::SignatureAlgorithmTrait, wrappers::asymmetric::signature::SignatureWrapper
 };
 
 /// Prepares the data payload for signing or verification.
@@ -39,28 +39,26 @@ fn prepare_key_payload(
 ///
 /// This is called by the server to prove its identity.
 pub fn sign_ephemeral_keys(
-    signer: SignatureAlgorithm,
     kem_pk: &TypedKemPublicKey,
     key_agreement_pk: &Option<TypedKeyAgreementPublicKey>,
     identity_sk: &TypedSignaturePrivateKey,
 ) -> Result<SignatureWrapper> {
     let payload = prepare_key_payload(kem_pk, key_agreement_pk)?;
-    signer.into_wrapper().sign(&payload, identity_sk).map_err(Into::into)
+    let signer = identity_sk.algorithm().into_wrapper();
+    signer.sign(&payload, identity_sk).map_err(Into::into)
 }
 
 /// Verifies the signature on the server's ephemeral public keys.
 ///
 /// This is called by the client to authenticate the server.
 pub fn verify_ephemeral_keys(
-    verifier: SignatureAlgorithm,
     kem_pk: &TypedKemPublicKey,
     key_agreement_pk: &Option<TypedKeyAgreementPublicKey>,
     signature: &SignatureWrapper,
     identity_pk: &TypedSignaturePublicKey,
 ) -> Result<()> {
     let payload = prepare_key_payload(kem_pk, key_agreement_pk)?;
-    verifier
-        .into_wrapper()
-        .verify(&payload, identity_pk, signature)
+    let verifier = identity_pk.algorithm().into_wrapper();
+    verifier.verify(&payload, identity_pk, signature)
         .map_err(|_| HandshakeError::InvalidSignature)
 }
