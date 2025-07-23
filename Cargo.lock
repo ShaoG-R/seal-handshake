@@ -1097,7 +1097,9 @@ dependencies = [
 
 [[package]]
 name = "seal-crypto-wrapper"
-version = "0.1.2"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cada0d36261d95adcbd20098ea12101025316ece615e189606a04b78f3128f98"
 dependencies = [
  "bincode",
  "rand 0.9.2",
