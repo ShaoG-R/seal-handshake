@@ -55,6 +55,12 @@ pub enum HandshakeError {
     #[error("invalid kem algorithm")]
     InvalidKemAlgorithm,
 
+    #[error("invalid aead algorithm")]
+    InvalidAeadAlgorithm,
+
+    #[error("invalid kdf algorithm")]
+    InvalidKdfAlgorithm,
+
     #[error("a required cryptographic component was not configured in the protocol suite")]
     ComponentMissing,
 

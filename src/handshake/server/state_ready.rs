@@ -61,9 +61,17 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
                 key_agreement_public_key,
                 session_ticket,
                 kem_algorithm,
+                aead_algorithm,
+                kdf_algorithm,
             } => {
                 if kem_algorithm != suite.kem().algorithm() {
                     return Err(HandshakeError::InvalidKemAlgorithm);
+                }
+                if aead_algorithm != suite.aead().algorithm() {
+                    return Err(HandshakeError::InvalidAeadAlgorithm);
+                }
+                if kdf_algorithm != suite.kdf().algorithm() {
+                    return Err(HandshakeError::InvalidKdfAlgorithm);
                 }
                 (
                     key_agreement_public_key,
@@ -156,9 +164,17 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
                 key_agreement_public_key,
                 session_ticket,
                 kem_algorithm,
+                aead_algorithm,
+                kdf_algorithm,
             } => {
                 if kem_algorithm != suite.kem().algorithm() {
                     return Err(HandshakeError::InvalidKemAlgorithm);
+                }
+                if aead_algorithm != suite.aead().algorithm() {
+                    return Err(HandshakeError::InvalidAeadAlgorithm);
+                }
+                if kdf_algorithm != suite.kdf().algorithm() {
+                    return Err(HandshakeError::InvalidKdfAlgorithm);
                 }
                 (
                     key_agreement_public_key,

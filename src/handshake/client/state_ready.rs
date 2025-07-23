@@ -34,6 +34,8 @@ impl<Sig: SignaturePresence> HandshakeClient<Ready, ClientReady, Sig> {
             kem_algorithm: suite.kem().algorithm(),
             key_agreement_public_key,
             session_ticket: state_data.session_ticket_to_send,
+            aead_algorithm: suite.aead().algorithm(),
+            kdf_algorithm: suite.kdf().algorithm(),
         };
 
         transcript.update(&client_hello);

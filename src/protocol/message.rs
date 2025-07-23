@@ -5,8 +5,7 @@ use seal_flow::crypto::algorithms::asymmetric::signature::SignatureAlgorithm;
 use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::crypto::prelude::{
-    EncapsulatedKey, TypedAsymmetricKeyTrait, TypedKemPublicKey, TypedKeyAgreementPublicKey,
-    TypedSignaturePublicKey,
+    AeadAlgorithm, EncapsulatedKey, TypedAsymmetricKeyTrait, TypedKemPublicKey, TypedKeyAgreementPublicKey, TypedSignaturePublicKey
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
 use seal_flow::crypto::wrappers::asymmetric::signature::SignatureWrapper;
@@ -34,6 +33,8 @@ pub enum HandshakeMessage {
         key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
         session_ticket: Option<Vec<u8>>,
         kem_algorithm: KemAlgorithm,
+        aead_algorithm: AeadAlgorithm,
+        kdf_algorithm: KdfKeyAlgorithm,
     },
 
     /// Server -> Client: Provides the server's public key and supported algorithms.
