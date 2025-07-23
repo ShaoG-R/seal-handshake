@@ -128,10 +128,14 @@ fn complete_server_hello_processing<S: SignaturePresence>(
     // and the encrypted initial payload (if any).
     let encrypted_message = if let Some(plaintext) = initial_payload {
         let aad = aad.unwrap_or_default();
+        let transcript_hash = client.transcript.current_hash();
+        let mut kdf_info = b"seal-handshake-c2s".to_vec();
+        kdf_info.extend_from_slice(&transcript_hash);
+
         let kdf_params = KdfParams {
             algorithm: client.suite.kdf(),
-            salt: Some(b"seal-handshake-salt".to_vec()),
-            info: Some(b"seal-handshake-c2s".to_vec()),
+            salt: Some(transcript_hash),
+            info: Some(kdf_info),
         };
 
         let aead = client.suite.aead();
@@ -142,7 +146,7 @@ fn complete_server_hello_processing<S: SignaturePresence>(
 
         let header = EncryptedHeader {
             params,
-            kdf_params,
+            kdf_params: Some(kdf_params),
             signature_algorithm: None,
             signed_transcript_hash: None,
             transcript_signature: None,

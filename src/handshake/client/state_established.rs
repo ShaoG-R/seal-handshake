@@ -32,6 +32,7 @@ impl<Sig: SignaturePresence> HandshakeClient<Established, ClientEstablished, Sig
             &self.state_data.encryption_key,
             plaintext,
             aad,
+            &self.transcript,
         )
     }
 }
@@ -123,20 +124,25 @@ fn common_encrypt<S: SignaturePresence>(
     key: &TypedAeadKey,
     plaintext: &[u8],
     aad: &[u8],
+    transcript: &crate::protocol::transcript::Transcript,
 ) -> Result<Vec<u8>> {
     let params = AeadParamsBuilder::new(suite.aead(), 4096)
         .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
         .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
         .build();
 
+    let transcript_hash = transcript.current_hash();
+    let mut kdf_info = b"seal-handshake-c2s".to_vec();
+    kdf_info.extend_from_slice(&transcript_hash);
+
     let kdf_params = KdfParams {
         algorithm: suite.kdf(),
-        salt: Some(b"seal-handshake-salt".to_vec()),
-        info: Some(b"seal-handshake-c2s".to_vec()),
+        salt: Some(transcript_hash),
+        info: Some(kdf_info),
     };
     let header = EncryptedHeader {
         params,
-        kdf_params,
+        kdf_params: Some(kdf_params),
         signature_algorithm: None,
         signed_transcript_hash: None,
         transcript_signature: None,

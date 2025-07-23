@@ -70,7 +70,7 @@ pub enum HandshakeMessage {
 #[bincode(crate = "bincode")]
 pub struct EncryptedHeader {
     pub params: AeadParams,
-    pub kdf_params: KdfParams,
+    pub kdf_params: Option<KdfParams>,
 
     // --- New fields for handshake integrity ---
     /// The algorithm used for the transcript signature.

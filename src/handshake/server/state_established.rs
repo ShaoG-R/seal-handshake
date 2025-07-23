@@ -66,11 +66,7 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig
         let header = EncryptedHeader {
             params,
             // These fields are not relevant for ticket encryption but are part of the struct.
-            kdf_params: KdfParams {
-                algorithm: self.state_data.kdf_algorithm,
-                salt: None,
-                info: None,
-            },
+            kdf_params: None,
             signature_algorithm: None,
             signed_transcript_hash: None,
             transcript_signature: None,
@@ -93,10 +89,10 @@ impl HandshakeServer<Established, ServerEstablished, WithSignature> {
     /// 当配置了签名方案时，加密数据并对握手记录进行签名。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
         let key = &self.state_data.encryption_key;
+        let transcript_hash = self.transcript.current_hash();
 
         // Sign the transcript.
         let signer = self.signature_key_pair.get_algorithm();
-        let transcript_hash = self.transcript.current_hash();
         let signature = signer.into_wrapper().sign(&transcript_hash, &self.signature_key_pair.private_key())?;
 
         // Encrypt with the signature.
@@ -106,8 +102,9 @@ impl HandshakeServer<Established, ServerEstablished, WithSignature> {
             aad,
             key,
             Some(signer),
-            Some(transcript_hash),
+            Some(transcript_hash.clone()),
             Some(signature.into()),
+            &transcript_hash,
         )
     }
 }
@@ -118,9 +115,10 @@ impl HandshakeServer<Established, ServerEstablished, WithoutSignature> {
     /// 当未配置签名方案时，加密数据而不进行签名。
     pub fn encrypt(&self, plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
         let key = &self.state_data.encryption_key;
+        let transcript_hash = self.transcript.current_hash();
 
         // Encrypt without a signature.
-        common_encrypt(self, plaintext, aad, key, None, None, None)
+        common_encrypt(self, plaintext, aad, key, None, None, None, &transcript_hash)
     }
 }
 
@@ -135,6 +133,7 @@ fn common_encrypt<Sig: SignaturePresence>(
     signature_algorithm: Option<SignatureAlgorithm>,
     signed_transcript_hash: Option<Vec<u8>>,
     transcript_signature: Option<SignatureWrapper>,
+    transcript_hash: &[u8],
 ) -> Result<Vec<u8>> {
     let aead = server.state_data.aead_algorithm;
     let params = AeadParamsBuilder::new(aead, 4096)
@@ -142,14 +141,17 @@ fn common_encrypt<Sig: SignaturePresence>(
         .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
         .build();
 
+    let mut kdf_info = b"seal-handshake-s2c".to_vec();
+    kdf_info.extend_from_slice(transcript_hash);
+
     let kdf_params = KdfParams {
         algorithm: server.state_data.kdf_algorithm,
-        salt: Some(b"seal-handshake-salt".to_vec()),
-        info: Some(b"seal-handshake-s2c".to_vec()),
+        salt: Some(transcript_hash.to_vec()),
+        info: Some(kdf_info),
     };
     let header = EncryptedHeader {
         params,
-        kdf_params,
+        kdf_params: Some(kdf_params),
         signature_algorithm,
         signed_transcript_hash,
         transcript_signature,
