@@ -1,11 +1,11 @@
 use super::{HandshakeServer, SignaturePresence};
 use crate::crypto::keys::{derive_session_keys, SessionKeysAndMaster};
-use crate::crypto::suite::ProtocolSuite;
 use crate::error::{HandshakeError, Result};
 use crate::protocol::{
     message::{EncryptedHeader, HandshakeMessage},
     state::{AwaitingKeyExchange, Established, ServerAwaitingKeyExchange, ServerEstablished},
 };
+use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 use seal_flow::crypto::keys::asymmetric::kem::SharedSecret;
 use seal_flow::{
     crypto::{prelude::*, traits::KemAlgorithmTrait},
@@ -56,11 +56,12 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
         let (encrypted_message, encapsulated_key) = extract_client_key_exchange(&message)?;
 
         let session_keys = derive_session_keys_from_client_exchange(
-            &suite,
             agreement_shared_secret,
             resumption_master_secret,
             &kem_key_pair,
             &encapsulated_key,
+            suite.kdf(),
+            suite.aead(),
         )?;
 
         let initial_payload = if encrypted_message.is_empty() {
@@ -100,22 +101,24 @@ fn extract_client_key_exchange(message: &HandshakeMessage) -> Result<(Vec<u8>, E
 }
 
 /// Derives session keys from the client's key exchange data.
-fn derive_session_keys_from_client_exchange<Sig: SignaturePresence>(
-    suite: &ProtocolSuite<Sig>,
+fn derive_session_keys_from_client_exchange(
     agreement_shared_secret: Option<SharedSecret>,
     resumption_master_secret: Option<SharedSecret>,
     kem_key_pair: &TypedKemKeyPair,
     encapsulated_key: &EncapsulatedKey,
+    kdf: KdfKeyAlgorithm,
+    aead: AeadAlgorithm,
 ) -> Result<SessionKeysAndMaster> {
     let kem = kem_key_pair.algorithm().into_wrapper();
     let shared_secret = kem.decapsulate_key(&kem_key_pair.private_key(), encapsulated_key)?;
 
     derive_session_keys(
-        suite,
         shared_secret,
         agreement_shared_secret,
         resumption_master_secret,
         false, // is_client = false
+        kdf,
+        aead,
     )
 }
 

@@ -214,11 +214,12 @@ fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
 
     // KDF: Derive session keys.
     let session_keys = derive_session_keys(
-        &client.suite,
         shared_secret_kem,
         shared_secret_agreement,
         client.state_data.resumption_master_secret.clone(), // Use the resumption secret
         true,                                             // is_client = true
+        client.suite.kdf(),
+        client.suite.aead(),
     )?;
 
     Ok((session_keys, encapsulated_key))
