@@ -52,14 +52,12 @@ pub enum HandshakeError {
     #[error("received an unexpected or invalid message for the current state")]
     InvalidMessage,
 
-    #[error("invalid kem algorithm")]
-    InvalidKemAlgorithm,
+    /// The client's proposed algorithms do not match the server's preset suite.
+    #[error("client's proposed algorithms do not match the server's preset suite")]
+    MismatchedAlgorithms,
 
-    #[error("invalid aead algorithm")]
-    InvalidAeadAlgorithm,
-
-    #[error("invalid kdf algorithm")]
-    InvalidKdfAlgorithm,
+    #[error("an invalid message was received for the current state.")]
+    InvalidMessageState,
 
     #[error("a required cryptographic component was not configured in the protocol suite")]
     ComponentMissing,

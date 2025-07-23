@@ -26,15 +26,18 @@ pub enum SuiteProvider<S: SignaturePresence> {
     /// 预设了特定的套件。
     Preset(ProtocolSuite<S>),
     /// The suite will be negotiated based on the client's proposal.
+    /// The `Option` is `None` before negotiation and `Some` after.
+    ///
     /// 套件将根据客户端的提议进行协商。
-    Negotiated,
+    /// `Option` 在协商前为 `None`，协商后为 `Some`。
+    Negotiated(Option<ProtocolSuite<S>>),
 }
 
 impl<S: SignaturePresence> SuiteProvider<S> {
     pub fn get(&self) -> Option<&ProtocolSuite<S>> {
         match self {
             SuiteProvider::Preset(suite) => Some(suite),
-            SuiteProvider::Negotiated => None,
+            SuiteProvider::Negotiated(suite) => suite.as_ref(),
         }
     }
 }

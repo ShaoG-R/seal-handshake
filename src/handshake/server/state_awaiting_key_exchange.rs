@@ -44,8 +44,6 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
                     kem_key_pair,
                     agreement_shared_secret,
                     resumption_master_secret,
-                    aead_algorithm,
-                    kdf_algorithm,
                     ..
                 },
             mut transcript,
@@ -57,13 +55,17 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
 
         let (encrypted_message, encapsulated_key) = extract_client_key_exchange(&message)?;
 
+        let suite = preset_suite
+            .get()
+            .ok_or(HandshakeError::InvalidState)?;
+
         let session_keys = derive_session_keys_from_client_exchange(
             agreement_shared_secret,
             resumption_master_secret,
             &kem_key_pair,
             &encapsulated_key,
-            kdf_algorithm,
-            aead_algorithm,
+            suite.kdf(),
+            suite.aead(),
         )?;
 
         let initial_payload = if encrypted_message.is_empty() {
@@ -81,8 +83,6 @@ impl<Sig: SignaturePresence> HandshakeServer<AwaitingKeyExchange, ServerAwaiting
                 encryption_key: session_keys.encryption_key,
                 decryption_key: session_keys.decryption_key,
                 master_secret: session_keys.master_secret,
-                aead_algorithm,
-                kdf_algorithm,
             },
             transcript,
             signature_key_pair,

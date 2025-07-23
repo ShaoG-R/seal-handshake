@@ -144,7 +144,7 @@ impl<S: SignaturePresence> HandshakeServerBuilder<SuiteNotSet, KeySet<S>> {
     pub fn build(self) -> HandshakeServer<Ready, ServerReady, S> {
         HandshakeServer {
             state: PhantomData,
-            preset_suite: SuiteProvider::Negotiated,
+            preset_suite: SuiteProvider::Negotiated(None),
             state_data: ServerReady {},
             transcript: Transcript::new(),
 

@@ -30,10 +30,15 @@ pub enum HandshakeMessage {
     /// Client -> Server: Initiates handshake, requesting the server's public key.
     /// Can optionally include a KeyAgreement public key and a session ticket for resumption.
     ClientHello {
+        /// The client's ephemeral public key for key agreement, if any.
         key_agreement_public_key: Option<TypedKeyAgreementPublicKey>,
+        /// An encrypted session ticket for resumption, if any.
         session_ticket: Option<Vec<u8>>,
+        /// The KEM algorithm the client wishes to use.
         kem_algorithm: KemAlgorithm,
+        /// The AEAD algorithm the client wishes to use.
         aead_algorithm: AeadAlgorithm,
+        /// The KDF algorithm the client wishes to use.
         kdf_algorithm: KdfKeyAlgorithm,
     },
 

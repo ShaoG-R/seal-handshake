@@ -58,7 +58,11 @@ impl<Sig: SignaturePresence> HandshakeServer<Established, ServerEstablished, Sig
 
         // Encrypt the ticket using the server's TEK.
         // We use the AEAD algorithm from the current suite for consistency.
-        let aead = self.state_data.aead_algorithm;
+        let aead = self
+            .preset_suite
+            .get()
+            .ok_or(HandshakeError::InvalidState)?
+            .aead();
         let params = AeadParamsBuilder::new(aead, 4096)
             .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
             .build();
@@ -135,7 +139,12 @@ fn common_encrypt<Sig: SignaturePresence>(
     transcript_signature: Option<SignatureWrapper>,
     transcript_hash: &[u8],
 ) -> Result<Vec<u8>> {
-    let aead = server.state_data.aead_algorithm;
+    let suite = server
+        .preset_suite
+        .get()
+        .ok_or(HandshakeError::InvalidState)?;
+
+    let aead = suite.aead();
     let params = AeadParamsBuilder::new(aead, 4096)
         .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
         .base_nonce(|nonce| OsRng.try_fill_bytes(nonce).map_err(Into::into))?
@@ -145,7 +154,7 @@ fn common_encrypt<Sig: SignaturePresence>(
     kdf_info.extend_from_slice(transcript_hash);
 
     let kdf_params = KdfParams {
-        algorithm: server.state_data.kdf_algorithm,
+        algorithm: suite.kdf(),
         salt: Some(transcript_hash.to_vec()),
         info: Some(kdf_info),
     };

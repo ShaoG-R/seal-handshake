@@ -1,18 +1,19 @@
 use super::{
     HandshakeServer, KeyAgreementEngine, Ready,
-    SignaturePresence,
+    SuiteProvider,
 };
 use crate::crypto::{
     signature::sign_ephemeral_keys,
-    suite::{WithSignature, WithoutSignature},
+    suite::{ProtocolSuiteBuilder, WithSignature, WithoutSignature},
 };
 use crate::error::{HandshakeError, Result};
 use crate::protocol::{
     message::{EncryptedHeader, HandshakeMessage, SessionTicket},
     state::{AwaitingKeyExchange, ServerAwaitingKeyExchange, ServerReady},
-    transcript::Transcript,
 };
-use seal_flow::crypto::{keys::asymmetric::kem::SharedSecret, prelude::TypedAeadKey};
+use seal_flow::crypto::{
+    keys::asymmetric::kem::SharedSecret, prelude::{TypedAeadKey, TypedAsymmetricKeyTrait},
+};
 use std::{
     marker::PhantomData,
     time::{SystemTime, UNIX_EPOCH},
@@ -37,12 +38,72 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
         HandshakeMessage,
         HandshakeServer<AwaitingKeyExchange, ServerAwaitingKeyExchange, WithSignature>,
     )> {
+        self.transcript.update(&message);
+
         let (
-            kem_public_key,
-            server_key_agreement_pk,
-            next_state_data,
-            mut transcript,
-        ) = process_client_hello_common(&mut self, message)?;
+            client_key_agreement_pk,
+            resumption_master_secret,
+            kem_algorithm,
+            aead_algorithm,
+            kdf_algorithm,
+        ) = if let HandshakeMessage::ClientHello {
+            key_agreement_public_key,
+            session_ticket,
+            kem_algorithm,
+            aead_algorithm,
+            kdf_algorithm,
+        } = message
+        {
+            (
+                key_agreement_public_key,
+                try_decode_ticket(self.ticket_encryption_key.as_ref(), session_ticket)?,
+                kem_algorithm,
+                aead_algorithm,
+                kdf_algorithm,
+            )
+        } else {
+            return Err(HandshakeError::InvalidMessage);
+        };
+
+        // Handle suite negotiation or verification
+        match &mut self.preset_suite {
+            SuiteProvider::Preset(suite) => {
+                if suite.kem() != kem_algorithm
+                    || suite.aead() != aead_algorithm
+                    || suite.kdf() != kdf_algorithm
+                    || suite.signature() != self.signature_key_pair.get_algorithm()
+                {
+                    return Err(HandshakeError::MismatchedAlgorithms);
+                }
+            }
+            SuiteProvider::Negotiated(negotiated_suite) => {
+                let new_suite = ProtocolSuiteBuilder::new()
+                    .with_kem(
+                        kem_algorithm,
+                        client_key_agreement_pk.as_ref().map(|k| k.algorithm()),
+                    )
+                    .with_signature(self.signature_key_pair.get_algorithm())
+                    .with_aead(aead_algorithm)
+                    .with_kdf(kdf_algorithm)
+                    .build();
+                *negotiated_suite = Some(new_suite);
+            }
+        }
+
+        // KEM key generation
+        let kem_key_pair = kem_algorithm.into_wrapper().generate_keypair()?;
+        let kem_public_key = kem_key_pair.public_key().clone();
+
+        // Key Agreement
+        let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) =
+            if let Some((engine, secret)) =
+                KeyAgreementEngine::new_for_server(client_key_agreement_pk.as_ref())?
+            {
+                let pk = engine.public_key().clone();
+                (Some(engine), Some(secret), Some(pk))
+            } else {
+                (None, None, None)
+            };
 
         // Sign the ephemeral keys.
         let signature = sign_ephemeral_keys(
@@ -57,13 +118,20 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
             signature: Some(signature),
         };
 
-        transcript.update(&server_hello);
+        self.transcript.update(&server_hello);
+
+        let next_state_data = ServerAwaitingKeyExchange {
+            kem_key_pair,
+            key_agreement_engine,
+            agreement_shared_secret,
+            resumption_master_secret,
+        };
 
         let next_server = HandshakeServer {
             state: PhantomData,
             preset_suite: self.preset_suite,
             state_data: next_state_data,
-            transcript,
+            transcript: self.transcript,
             signature_key_pair: self.signature_key_pair,
             ticket_encryption_key: self.ticket_encryption_key,
         };
@@ -87,12 +155,71 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
         HandshakeMessage,
         HandshakeServer<AwaitingKeyExchange, ServerAwaitingKeyExchange, WithoutSignature>,
     )> {
+        self.transcript.update(&message);
+
         let (
-            kem_public_key,
-            server_key_agreement_pk,
-            next_state_data,
-            mut transcript,
-        ) = process_client_hello_common(&mut self, message)?;
+            client_key_agreement_pk,
+            resumption_master_secret,
+            kem_algorithm,
+            aead_algorithm,
+            kdf_algorithm,
+        ) = if let HandshakeMessage::ClientHello {
+            key_agreement_public_key,
+            session_ticket,
+            kem_algorithm,
+            aead_algorithm,
+            kdf_algorithm,
+        } = message
+        {
+            (
+                key_agreement_public_key,
+                try_decode_ticket(self.ticket_encryption_key.as_ref(), session_ticket)?,
+                kem_algorithm,
+                aead_algorithm,
+                kdf_algorithm,
+            )
+        } else {
+            return Err(HandshakeError::InvalidMessage);
+        };
+
+        // Handle suite negotiation or verification
+        match &mut self.preset_suite {
+            SuiteProvider::Preset(suite) => {
+                if suite.kem() != kem_algorithm
+                    || suite.aead() != aead_algorithm
+                    || suite.kdf() != kdf_algorithm
+                {
+                    return Err(HandshakeError::MismatchedAlgorithms);
+                }
+            }
+            SuiteProvider::Negotiated(negotiated_suite) => {
+                let new_suite = ProtocolSuiteBuilder::new()
+                    .with_kem(
+                        kem_algorithm,
+                        client_key_agreement_pk.as_ref().map(|k| k.algorithm()),
+                    )
+                    .without_signature()
+                    .with_aead(aead_algorithm)
+                    .with_kdf(kdf_algorithm)
+                    .build();
+                *negotiated_suite = Some(new_suite);
+            }
+        }
+
+        // KEM key generation
+        let kem_key_pair = kem_algorithm.into_wrapper().generate_keypair()?;
+        let kem_public_key = kem_key_pair.public_key().clone();
+
+        // Key Agreement
+        let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) =
+            if let Some((engine, secret)) =
+                KeyAgreementEngine::new_for_server(client_key_agreement_pk.as_ref())?
+            {
+                let pk = engine.public_key().clone();
+                (Some(engine), Some(secret), Some(pk))
+            } else {
+                (None, None, None)
+            };
 
         let server_hello = HandshakeMessage::ServerHello {
             kem_public_key,
@@ -100,89 +227,26 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
             signature: None,
         };
 
-        transcript.update(&server_hello);
+        self.transcript.update(&server_hello);
+
+        let next_state_data = ServerAwaitingKeyExchange {
+            kem_key_pair,
+            key_agreement_engine,
+            agreement_shared_secret,
+            resumption_master_secret,
+        };
 
         let next_server = HandshakeServer {
             state: PhantomData,
             preset_suite: self.preset_suite,
             state_data: next_state_data,
-            transcript,
+            transcript: self.transcript,
             signature_key_pair: self.signature_key_pair,
             ticket_encryption_key: self.ticket_encryption_key,
         };
 
         Ok((server_hello, next_server))
     }
-}
-
-/// Helper function to process the common logic of `ClientHello`.
-fn process_client_hello_common<Sig: SignaturePresence>(
-    server: &mut HandshakeServer<Ready, ServerReady, Sig>,
-    message: HandshakeMessage,
-) -> Result<(
-    seal_flow::crypto::prelude::TypedKemPublicKey,
-    Option<seal_flow::crypto::prelude::TypedKeyAgreementPublicKey>,
-    ServerAwaitingKeyExchange,
-    Transcript,
-)> {
-    server.transcript.update(&message);
-
-    let (client_key_agreement_pk, resumption_master_secret, kem_algorithm, aead_algorithm, kdf_algorithm) = match message {
-        HandshakeMessage::ClientHello {
-            key_agreement_public_key,
-            session_ticket,
-            kem_algorithm,
-            aead_algorithm,
-            kdf_algorithm,
-        } => {
-            if let Some(suite) = server.preset_suite.get() {
-                if suite.kem() != kem_algorithm {
-                    return Err(HandshakeError::InvalidKemAlgorithm);
-                }
-                if suite.aead() != aead_algorithm {
-                    return Err(HandshakeError::InvalidAeadAlgorithm);
-                }
-                if suite.kdf() != kdf_algorithm {
-                    return Err(HandshakeError::InvalidKdfAlgorithm);
-                }
-            }
-
-            (
-                key_agreement_public_key,
-                try_decode_ticket(server.ticket_encryption_key.as_ref(), session_ticket)?,
-                kem_algorithm,
-                aead_algorithm,
-                kdf_algorithm,
-            )
-        }
-        _ => return Err(HandshakeError::InvalidMessage),
-    };
-
-    // KEM key generation
-    let kem_key_pair = kem_algorithm.into_wrapper().generate_keypair()?;
-    let kem_public_key = kem_key_pair.public_key().clone();
-
-    // Key Agreement
-    let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) =
-        if let Some((engine, secret)) =
-            KeyAgreementEngine::new_for_server(client_key_agreement_pk.as_ref())?
-        {
-            let pk = engine.public_key().clone();
-            (Some(engine), Some(secret), Some(pk))
-        } else {
-            (None, None, None)
-        };
-
-    let next_state_data = ServerAwaitingKeyExchange {
-        kem_key_pair,
-        key_agreement_engine,
-        agreement_shared_secret,
-        resumption_master_secret,
-        aead_algorithm,
-        kdf_algorithm,
-    };
-
-    Ok((kem_public_key, server_key_agreement_pk, next_state_data, server.transcript.clone()))
 }
 
 /// Attempts to decrypt and validate a session ticket.
