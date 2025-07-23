@@ -1,5 +1,5 @@
 use super::{
-    HandshakeServer, HandshakeServerBuilder, KeyAgreementEngine, Missing, Ready,
+    HandshakeServer, KeyAgreementEngine, Ready,
     SignaturePresence,
 };
 use crate::crypto::{
@@ -19,15 +19,6 @@ use std::{
 };
 
 use crate::bincode;
-
-impl<Sig: SignaturePresence> HandshakeServer<Ready, ServerReady, Sig> {
-    /// Creates a new `HandshakeServerBuilder` to construct a `HandshakeServer`.
-    ///
-    /// 在 `Ready` 状态下创建一个新的 `HandshakeServer` 的构建器。
-    pub fn builder() -> HandshakeServerBuilder<Missing, Sig> {
-        HandshakeServerBuilder::new()
-    }
-}
 
 // --- `process_client_hello` implementations ---
 
@@ -144,7 +135,7 @@ fn process_client_hello_common<Sig: SignaturePresence>(
             aead_algorithm,
             kdf_algorithm,
         } => {
-            if let Some(suite) = server.preset_suite.as_ref() {
+            if let Some(suite) = server.preset_suite.get() {
                 if suite.kem() != kem_algorithm {
                     return Err(HandshakeError::InvalidKemAlgorithm);
                 }

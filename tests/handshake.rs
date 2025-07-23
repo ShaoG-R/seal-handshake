@@ -7,7 +7,7 @@ use seal_flow::crypto::algorithms::{
     kdf::key::KdfKeyAlgorithm,
 };
 use seal_flow::crypto::traits::SignatureAlgorithmTrait;
-use seal_handshake::crypto::suite::{ProtocolSuiteBuilder, WithSignature};
+use seal_handshake::crypto::suite::{ProtocolSuiteBuilder};
 use seal_handshake::error::Result;
 use seal_handshake::handshake::client::HandshakeClientBuilder;
 use seal_handshake::handshake::server::HandshakeServer;
@@ -134,7 +134,7 @@ fn test_kem_only_handshake() -> Result<()> {
 
     let server = HandshakeServer::builder()
         .suite(suite.clone())
-        .signature_key_pair(())
+        .without_signature()
         .build();
     let client = HandshakeClientBuilder::new()
         .suite(suite)
@@ -319,7 +319,7 @@ fn test_handshake_without_preset_suite() -> Result<()> {
     println!("--- Initializing server (without preset suite) and client ---");
 
     // SERVER: Build without a preset suite.
-    let server = HandshakeServer::<_, _, WithSignature>::builder()
+    let server = HandshakeServer::builder()
         .signature_key_pair(server_identity_key_pair)
         .build();
 

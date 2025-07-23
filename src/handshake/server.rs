@@ -1,9 +1,9 @@
 //! Implements the server-side of the handshake protocol state machine.
 //! 实现握手协议状态机的服务器端。
 
-use crate::crypto::suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence};
+use crate::crypto::suite::{KeyAgreementEngine, ProtocolSuite, SignaturePresence, WithSignature};
 use crate::protocol::{
-    state::Ready,
+    state::{Ready, ServerReady},
     transcript::Transcript,
 };
 use std::marker::PhantomData;
@@ -14,8 +14,30 @@ mod state_established;
 mod state_ready;
 
 pub use builder::HandshakeServerBuilder;
-use builder::Missing;
+
 use seal_flow::crypto::prelude::TypedAeadKey;
+
+/// Represents whether a protocol suite is preset or will be negotiated.
+///
+/// 表示协议套件是预设的还是将要协商的。
+#[derive(Debug, Clone)]
+pub enum SuiteProvider<S: SignaturePresence> {
+    /// A specific suite is preset.
+    /// 预设了特定的套件。
+    Preset(ProtocolSuite<S>),
+    /// The suite will be negotiated based on the client's proposal.
+    /// 套件将根据客户端的提议进行协商。
+    Negotiated,
+}
+
+impl<S: SignaturePresence> SuiteProvider<S> {
+    pub fn get(&self) -> Option<&ProtocolSuite<S>> {
+        match self {
+            SuiteProvider::Preset(suite) => Some(suite),
+            SuiteProvider::Negotiated => None,
+        }
+    }
+}
 
 // --- State Markers ---
 // (State markers are now imported from `crate::state`)
@@ -41,7 +63,7 @@ pub struct HandshakeServer<S, StateData, Sig: SignaturePresence> {
     /// The cryptographic suite used for the handshake.
     ///
     /// 握手过程中使用的密码套件。
-    preset_suite: Option<ProtocolSuite<Sig>>,
+    preset_suite: SuiteProvider<Sig>,
     /// The actual data associated with the current state.
     ///
     /// 与当前状态关联的实际数据。
@@ -64,4 +86,14 @@ pub struct HandshakeServer<S, StateData, Sig: SignaturePresence> {
     /// 用于加密会话票据的长期对称密钥。
     /// 如果未设置，服务器将不会签发票据。
     ticket_encryption_key: Option<TypedAeadKey>,
+}
+
+impl HandshakeServer<Ready, ServerReady, WithSignature> {
+    /// Creates a new `HandshakeServerBuilder` to construct a `HandshakeServer`.
+    ///
+    /// 创建一个新的 `HandshakeServerBuilder` 来构造一个 `HandshakeServer`。
+    pub fn builder(
+    ) -> HandshakeServerBuilder<builder::SuiteNotSet, builder::KeyNotSet> {
+        HandshakeServerBuilder::new()
+    }
 }
