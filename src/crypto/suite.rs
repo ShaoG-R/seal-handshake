@@ -24,38 +24,52 @@ pub struct KeyAgreementEngine {
 
 impl KeyAgreementEngine {
     /// 为客户端创建一个新的引擎，生成一个临时的密钥对。
-    pub fn new_for_client(wrapper: &KeyAgreementAlgorithmWrapper) -> crate::error::Result<Self> {
-        let key_pair = wrapper.generate_keypair()?;
-        Ok(Self {
-            key_pair,
-            wrapper: wrapper.clone(),
-        })
+    pub fn new_for_client(
+        wrapper: Option<&KeyAgreementAlgorithmWrapper>,
+    ) -> crate::error::Result<Option<Self>> {
+        if let Some(wrapper) = wrapper {
+            let key_pair = wrapper.generate_keypair()?;
+            Ok(Some(Self {
+                key_pair,
+                wrapper: wrapper.clone(),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 为服务器创建一个新的引擎，生成一个临时的密钥对，
     /// 并与客户端的公钥计算共享密钥。
     pub fn new_for_server(
-        wrapper: &KeyAgreementAlgorithmWrapper,
-        client_pk: &TypedKeyAgreementPublicKey,
-    ) -> crate::error::Result<(Self, SharedSecret)> {
-        let key_pair = wrapper.generate_keypair()?;
-        let shared_secret = wrapper.agree(&key_pair.private_key(), client_pk)?;
-        let engine = Self {
-            key_pair,
-            wrapper: wrapper.clone(),
-        };
-        Ok((engine, SharedSecret(shared_secret.into())))
+        wrapper: Option<&KeyAgreementAlgorithmWrapper>,
+        client_pk: Option<&TypedKeyAgreementPublicKey>,
+    ) -> crate::error::Result<Option<(Self, SharedSecret)>> {
+        if let (Some(wrapper), Some(client_pk)) = (wrapper, client_pk) {
+            let key_pair = wrapper.generate_keypair()?;
+            let shared_secret = wrapper.agree(&key_pair.private_key(), client_pk)?;
+            let engine = Self {
+                key_pair,
+                wrapper: wrapper.clone(),
+            };
+            Ok(Some((engine, SharedSecret(shared_secret.into()))))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 使用此引擎的私钥和对方的公钥计算共享密钥。
     pub fn agree(
         &self,
-        other_party_pk: &TypedKeyAgreementPublicKey,
-    ) -> crate::error::Result<SharedSecret> {
-        self.wrapper
-            .agree(&self.key_pair.private_key(), other_party_pk)
-            .map(|s| SharedSecret(s.into()))
-            .map_err(Into::into)
+        other_party_pk: Option<&TypedKeyAgreementPublicKey>,
+    ) -> crate::error::Result<Option<SharedSecret>> {
+        if let Some(other_party_pk) = other_party_pk {
+            self.wrapper
+                .agree(&self.key_pair.private_key(), other_party_pk)
+                .map(|s| Some(SharedSecret(s.into())))
+                .map_err(Into::into)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn public_key(&self) -> &TypedKeyAgreementPublicKey {

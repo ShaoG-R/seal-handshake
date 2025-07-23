@@ -79,20 +79,16 @@ impl HandshakeServer<Ready, ServerReady, WithSignature> {
         let kem_public_key = kem_key_pair.public_key().clone();
 
         // Key Agreement
-        let (server_key_agreement_pk, key_agreement_engine, agreement_shared_secret) =
-            if let (Some(client_pk), Some(key_agreement)) =
-                (client_key_agreement_pk, suite.key_agreement())
+        let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) ={
+            if let Some((engine, secret)) =
+                KeyAgreementEngine::new_for_server(suite.key_agreement().as_ref(), client_key_agreement_pk.as_ref())?
             {
-                let (engine, shared_secret) =
-                    KeyAgreementEngine::new_for_server(key_agreement, &client_pk)?;
-                (
-                    Some(engine.public_key().clone()),
-                    Some(engine),
-                    Some(shared_secret),
-                )
+                let pk = engine.public_key().clone();
+                (Some(engine), Some(secret), Some(pk))
             } else {
                 (None, None, None)
-            };
+            }
+        };
 
         // Sign the ephemeral keys.
         let signer = suite.signature();
@@ -178,17 +174,12 @@ impl HandshakeServer<Ready, ServerReady, WithoutSignature> {
         let kem_public_key = kem_key_pair.public_key().clone();
 
         // Key Agreement
-        let (server_key_agreement_pk, key_agreement_engine, agreement_shared_secret) =
-            if let (Some(client_pk), Some(key_agreement)) =
-                (client_key_agreement_pk, suite.key_agreement())
+        let (key_agreement_engine, agreement_shared_secret, server_key_agreement_pk) =
+            if let Some((engine, secret)) =
+                KeyAgreementEngine::new_for_server(suite.key_agreement().as_ref(), client_key_agreement_pk.as_ref())?
             {
-                let (engine, shared_secret) =
-                    KeyAgreementEngine::new_for_server(key_agreement, &client_pk)?;
-                (
-                    Some(engine.public_key().clone()),
-                    Some(engine),
-                    Some(shared_secret),
-                )
+                let pk = engine.public_key().clone();
+                (Some(engine), Some(secret), Some(pk))
             } else {
                 (None, None, None)
             };

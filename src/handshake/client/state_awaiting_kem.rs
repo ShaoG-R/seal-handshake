@@ -206,12 +206,11 @@ fn derive_session_keys_from_server_hello<Sig: SignaturePresence>(
     let (shared_secret_kem, encapsulated_key) = kem.encapsulate_key(&server_kem_pk)?;
 
     // Key Agreement: If negotiated, compute the shared secret.
-    let shared_secret_agreement =
-        if let (Some(engine), Some(server_pk)) = (client.state_data.key_agreement_engine.as_ref(), &server_key_agreement_pk) {
-            Some(engine.agree(server_pk)?)
-        } else {
-            None
-        };
+    let shared_secret_agreement = if let Some(engine) = client.state_data.key_agreement_engine.as_ref() {
+        engine.agree(server_key_agreement_pk.as_ref())?
+    } else {
+        None
+    };
 
     // KDF: Derive session keys.
     let session_keys = derive_session_keys(
